@@ -473,34 +473,41 @@ export function SchematicView() {
       let placed = false;
 
       for (const net of myNets) {
-        // Find the IC pin this passive connects to
+        // Find which pin of the passive is in this net
+        const passiveConn = net.connections.find(c => c.componentId === p.id);
+        if (!passiveConn) continue;
+        const passivePinInNet = passiveConn.pinIndex; // 0 or 1
+
+        // Find the IC pin this net also connects to
         for (const conn of net.connections) {
           if (conn.componentId === p.id) continue;
           const icPin = pinXY.get(`${conn.componentId}:${conn.pinIndex}`);
           if (!icPin) continue;
 
-          // Determine which side of the IC
           const icEntry = icPos.find(ic => ic.comp.id === conn.componentId);
           if (!icEntry) continue;
 
           const isLeft = icPin.x < icEntry.x + IC_W / 2;
           const passiveLen = 3 * GRID;
-          const gap = 3 * GRID; // Space between IC pin stub and passive
+          const gap = 3 * GRID;
+
+          // The passive pin that connects to the IC goes nearest the IC
+          // The other pin goes on the outside
+          const icSidePin = passivePinInNet;      // this pin faces the IC
+          const outerPin = 1 - passivePinInNet;    // this pin faces outward
 
           if (isLeft) {
-            // Place horizontally to the left of the IC pin, with gap
-            const x2 = icPin.x - gap;
-            const x1 = x2 - passiveLen;
+            const x2 = icPin.x - gap;              // IC side
+            const x1 = x2 - passiveLen;             // outer side
             passiveLayout.push({ comp: p, x1, y1: icPin.y, x2, y2: icPin.y, orientation: 'h' });
-            pinXY.set(`${p.id}:0`, { x: x1, y: icPin.y });
-            pinXY.set(`${p.id}:1`, { x: x2, y: icPin.y });
+            pinXY.set(`${p.id}:${icSidePin}`, { x: x2, y: icPin.y });
+            pinXY.set(`${p.id}:${outerPin}`, { x: x1, y: icPin.y });
           } else {
-            // Place horizontally to the right, with gap
-            const x1 = icPin.x + gap;
-            const x2 = x1 + passiveLen;
+            const x1 = icPin.x + gap;              // IC side
+            const x2 = x1 + passiveLen;             // outer side
             passiveLayout.push({ comp: p, x1, y1: icPin.y, x2, y2: icPin.y, orientation: 'h' });
-            pinXY.set(`${p.id}:0`, { x: x1, y: icPin.y });
-            pinXY.set(`${p.id}:1`, { x: x2, y: icPin.y });
+            pinXY.set(`${p.id}:${icSidePin}`, { x: x1, y: icPin.y });
+            pinXY.set(`${p.id}:${outerPin}`, { x: x2, y: icPin.y });
           }
           placed = true;
           break;
@@ -562,110 +569,163 @@ export function SchematicView() {
         <line x1={GRID} y1={svgH - GRID} x2={svgW - GRID} y2={svgH - GRID} stroke="#2244bb" strokeWidth={2} opacity={0.4} />
         <text x={GRID + 4} y={svgH - GRID - 4} fill="#2244bb" fontSize={9} fontFamily="monospace">GND</text>
 
-        {/* Net connections — obstacle-aware orthogonal routing */}
+        {/* Net connections — channel-based orthogonal routing */}
         {(() => {
-          // Build obstacle rectangles from IC bodies (with margin)
-          const margin = 2 * GRID;
-          const obstacles = layout.icPos.map(({ x, y, h }) => ({
-            left: x - margin,
-            right: x + IC_W + margin,
-            top: y - margin,
-            bottom: y + h + margin,
-          }));
+          // IC center and edges for routing decisions
+          const icCenterX = layout.icPos.length > 0 ? layout.icPos[0].x + IC_W / 2 : svgW / 2;
+          const icLeftEdge = layout.icPos.length > 0 ? Math.min(...layout.icPos.map(p => p.x)) : svgW / 2;
+          const icRightEdge = layout.icPos.length > 0 ? Math.max(...layout.icPos.map(p => p.x + IC_W)) : svgW / 2;
 
-          // Find the center X of IC area for determining sides
-          const icCenterX = layout.icPos.length > 0
-            ? layout.icPos[0].x + IC_W / 2
-            : svgW / 2;
+          // Channel allocation: each side gets incrementally spaced vertical channels
+          const CHANNEL_SPACING = 8;
+          let leftChannelCount = 0;
+          let rightChannelCount = 0;
 
-          // Route a wire from A to B avoiding obstacles
-          // Key rule: wires on the left side stay left, right side stay right
-          function routeWire(ax: number, ay: number, bx: number, by: number, netIdx: number): string {
-            const dx = bx - ax;
-            const dy = by - ay;
+          // Pre-process: figure out which nets need vertical routing and on which side
+          type NetRoute = {
+            ni: number;
+            color: string;
+            positions: Array<{ x: number; y: number }>;
+            needsVertical: boolean;
+            side: 'left' | 'right' | 'cross';
+            channel: number; // allocated channel index
+          };
 
-            // Straight horizontal
-            if (Math.abs(dy) < 2) return `M${ax},${ay} L${bx},${by}`;
-            // Straight vertical
-            if (Math.abs(dx) < 2) return `M${ax},${ay} L${bx},${by}`;
+          const netRoutes: NetRoute[] = [];
 
-            // Determine which side both points are on
-            const aIsLeft = ax < icCenterX;
-            const bIsLeft = bx < icCenterX;
-            const bothLeft = aIsLeft && bIsLeft;
-            const bothRight = !aIsLeft && !bIsLeft;
-
-            // Spread parallel wires with offset
-            const spreadOffset = (netIdx % 5) * 4 - 8;
-
-            if (bothLeft) {
-              // Both on left — route vertically on the FAR LEFT, never crossing right
-              const routeX = Math.min(ax, bx) - GRID - Math.abs(spreadOffset);
-              return `M${ax},${ay} L${routeX},${ay} L${routeX},${by} L${bx},${by}`;
-            }
-
-            if (bothRight) {
-              // Both on right — route vertically on the FAR RIGHT
-              const routeX = Math.max(ax, bx) + GRID + Math.abs(spreadOffset);
-              return `M${ax},${ay} L${routeX},${ay} L${routeX},${by} L${bx},${by}`;
-            }
-
-            // Different sides — need to cross, route around obstacles
-            // Go from A horizontally out, then vertically around all ICs, then horizontally to B
-            const goLeft = ax < bx;
-            let routeX: number;
-
-            if (goLeft) {
-              // Route on the right side of all obstacles
-              const rightEdge = Math.max(...obstacles.map(o => o.right));
-              routeX = rightEdge + GRID + (netIdx % 4) * 4;
-            } else {
-              // Route on the left side of all obstacles
-              const leftEdge = Math.min(...obstacles.map(o => o.left));
-              routeX = leftEdge - GRID - (netIdx % 4) * 4;
-            }
-
-            // Check if routing outside is shorter than going between ICs
-            const betweenICs = obstacles.length >= 2;
-            if (betweenICs) {
-              // Find gap between ICs
-              const sortedObs = [...obstacles].sort((a, b) => a.top - b.top);
-              for (let i = 0; i < sortedObs.length - 1; i++) {
-                const gap = sortedObs[i + 1].top - sortedObs[i].bottom;
-                if (gap > 2 * GRID) {
-                  const gapY = sortedObs[i].bottom + gap / 2;
-                  const minY = Math.min(ay, by), maxY = Math.max(ay, by);
-                  if (gapY > minY && gapY < maxY) {
-                    // Can route through the gap between ICs
-                    return `M${ax},${ay} L${ax},${gapY} L${bx},${gapY} L${bx},${by}`;
-                  }
-                }
-              }
-            }
-
-            return `M${ax},${ay} L${routeX},${ay} L${routeX},${by} L${bx},${by}`;
-          }
-
-          return nets.map((net, ni) => {
-            if (net.connections.length < 2) return null;
+          for (let ni = 0; ni < nets.length; ni++) {
+            const net = nets[ni];
+            if (net.connections.length < 2) continue;
             const color = NET_COLORS[ni % NET_COLORS.length];
 
             const positions = net.connections
               .map(c => layout.pinXY.get(`${c.componentId}:${c.pinIndex}`))
               .filter(Boolean) as Array<{ x: number; y: number }>;
 
-            if (positions.length < 2) return null;
+            if (positions.length < 2) continue;
 
-            const sorted = [...positions].sort((a, b) => a.x - b.x || a.y - b.y);
+            // Determine if pins are at different heights (need vertical routing)
+            const ys = positions.map(p => p.y);
+            const needsVertical = Math.max(...ys) - Math.min(...ys) > 2;
+
+            // Determine side
+            const allLeft = positions.every(p => p.x < icCenterX);
+            const allRight = positions.every(p => p.x >= icCenterX);
+            const side = allLeft ? 'left' : allRight ? 'right' : 'cross';
+
+            // Allocate channel
+            let channel = 0;
+            if (needsVertical) {
+              if (side === 'left') {
+                channel = leftChannelCount++;
+              } else if (side === 'right') {
+                channel = rightChannelCount++;
+              } else {
+                // Cross-side: use right channels
+                channel = rightChannelCount++;
+              }
+            }
+
+            netRoutes.push({ ni, color, positions, needsVertical, side, channel });
+          }
+
+          // Passive component bounding boxes for avoidance
+          const passiveBounds = layout.passiveLayout.map(p => ({
+            left: Math.min(p.x1, p.x2) - 5,
+            right: Math.max(p.x1, p.x2) + 5,
+            top: Math.min(p.y1, p.y2) - 12,
+            bottom: Math.max(p.y1, p.y2) + 12,
+          }));
+
+          return netRoutes.map(({ ni, color, positions, needsVertical, side, channel }) => {
+            const sorted = [...positions].sort((a, b) => a.y - b.y); // sort by Y for vertical flow
+            const wires: React.JSX.Element[] = [];
+
+            for (let i = 1; i < sorted.length; i++) {
+              const a = sorted[i - 1];
+              const b = sorted[i];
+              const dx = b.x - a.x;
+              const dy = b.y - a.y;
+
+              let d: string;
+
+              if (Math.abs(dy) < 2) {
+                // Same height — straight horizontal
+                d = `M${a.x},${a.y} L${b.x},${b.y}`;
+              } else if (Math.abs(dx) < 2) {
+                // Same column — straight vertical
+                d = `M${a.x},${a.y} L${b.x},${b.y}`;
+              } else if (side === 'left') {
+                // Both on left — route via dedicated left channel
+                // Channel X: progressively further left from the leftmost passive
+                const channelX = icLeftEdge - GRID * 2 - (3 * GRID) - channel * CHANNEL_SPACING;
+                d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
+              } else if (side === 'right') {
+                // Both on right — route via dedicated right channel
+                // But check if the vertical span crosses an IC body
+                const channelX = icRightEdge + GRID * 2 + (3 * GRID) + channel * CHANNEL_SPACING;
+                const minY = Math.min(a.y, b.y);
+                const maxY = Math.max(a.y, b.y);
+                const crossesIC = layout.icPos.some(ic => {
+                  return channelX < ic.x + IC_W + GRID * 3 && minY < ic.y + ic.h && maxY > ic.y;
+                });
+
+                if (crossesIC && layout.icPos.length >= 2) {
+                  // Route through gap between ICs instead
+                  const sortedObs = layout.icPos.map(p => ({ top: p.y, bottom: p.y + p.h })).sort((x, y) => x.top - y.top);
+                  let foundGap = false;
+                  for (let g = 0; g < sortedObs.length - 1; g++) {
+                    const gapTop = sortedObs[g].bottom;
+                    const gapBot = sortedObs[g + 1].top;
+                    if (gapBot - gapTop > GRID) {
+                      const gapY = gapTop + (gapBot - gapTop) / 2;
+                      // Route: down to gap, across to far right channel, down to target
+                      const farX = channelX;
+                      d = `M${a.x},${a.y} L${farX},${a.y} L${farX},${gapY} L${farX},${b.y} L${b.x},${b.y}`;
+                      foundGap = true;
+                      break;
+                    }
+                  }
+                  if (!foundGap) {
+                    d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
+                  }
+                } else {
+                  d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
+                }
+              } else {
+                // Cross-side — route between ICs if gap exists, else around right
+                const sortedObs = layout.icPos.map(p => ({ top: p.y, bottom: p.y + p.h })).sort((a, b) => a.top - b.top);
+                let routedThroughGap = false;
+
+                for (let g = 0; g < sortedObs.length - 1; g++) {
+                  const gapTop = sortedObs[g].bottom;
+                  const gapBot = sortedObs[g + 1].top;
+                  if (gapBot - gapTop > GRID * 2) {
+                    const gapY = gapTop + (gapBot - gapTop) / 2 + channel * CHANNEL_SPACING;
+                    const minY = Math.min(a.y, b.y);
+                    const maxY = Math.max(a.y, b.y);
+                    if (gapY > minY - GRID && gapY < maxY + GRID) {
+                      d = `M${a.x},${a.y} L${a.x},${gapY} L${b.x},${gapY} L${b.x},${b.y}`;
+                      routedThroughGap = true;
+                      break;
+                    }
+                  }
+                }
+
+                if (!routedThroughGap) {
+                  const channelX = icRightEdge + GRID * 2 + (3 * GRID) + channel * CHANNEL_SPACING;
+                  d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
+                }
+
+                d = d!;
+              }
+
+              wires.push(<path key={`w${ni}-${i}`} d={d!} fill="none" stroke={color} strokeWidth={1.5} />);
+            }
 
             return (
               <g key={`net-${ni}`}>
-                {sorted.map((pos, i) => {
-                  if (i === 0) return null;
-                  const prev = sorted[i - 1];
-                  const d = routeWire(prev.x, prev.y, pos.x, pos.y, ni);
-                  return <path key={`w${ni}-${i}`} d={d} fill="none" stroke={color} strokeWidth={1.5} />;
-                })}
+                {wires}
                 {sorted.map((pos, i) => (
                   <Junction key={`j${ni}-${i}`} x={pos.x} y={pos.y} />
                 ))}
