@@ -638,23 +638,51 @@ export function SchematicView() {
           }));
 
           return netRoutes.map(({ ni, color, positions, needsVertical, side, channel }) => {
-            const sorted = [...positions].sort((a, b) => a.y - b.y); // sort by Y for vertical flow
             const wires: React.JSX.Element[] = [];
 
-            for (let i = 1; i < sorted.length; i++) {
-              const a = sorted[i - 1];
-              const b = sorted[i];
+            // Group positions by Y (same-row connections are horizontal wires)
+            const rowGroups = new Map<number, Array<{ x: number; y: number }>>();
+            for (const pos of positions) {
+              const roundedY = Math.round(pos.y / 4) * 4; // snap to ~4px grid
+              if (!rowGroups.has(roundedY)) rowGroups.set(roundedY, []);
+              rowGroups.get(roundedY)!.push(pos);
+            }
+
+            // 1) Draw horizontal wires within each row group
+            let wireIdx = 0;
+            const rowAnchors: Array<{ x: number; y: number }> = []; // one anchor per row for vertical routing
+            for (const [, group] of rowGroups) {
+              group.sort((a, b) => a.x - b.x);
+              // Connect all positions in this row with a horizontal wire
+              if (group.length >= 2) {
+                const x1 = group[0].x;
+                const x2 = group[group.length - 1].x;
+                const y = group[0].y;
+                wires.push(<line key={`h${ni}-${wireIdx++}`} x1={x1} y1={y} x2={x2} y2={y} stroke={color} strokeWidth={1.5} />);
+              }
+              // Pick the IC-side position as anchor for vertical routing
+              const anchor = side === 'left'
+                ? group.reduce((best, p) => p.x > best.x ? p : best, group[0])
+                : group.reduce((best, p) => p.x < best.x ? p : best, group[0]);
+              rowAnchors.push(anchor);
+            }
+
+            // 2) Draw vertical wires between row anchors
+            rowAnchors.sort((a, b) => a.y - b.y);
+            for (let i = 1; i < rowAnchors.length; i++) {
+              const a = rowAnchors[i - 1];
+              const b = rowAnchors[i];
               const dx = b.x - a.x;
               const dy = b.y - a.y;
 
               let d: string;
 
               if (Math.abs(dy) < 2) {
-                // Same height — straight horizontal
                 d = `M${a.x},${a.y} L${b.x},${b.y}`;
               } else if (Math.abs(dx) < 2) {
-                // Same column — straight vertical
                 d = `M${a.x},${a.y} L${b.x},${b.y}`;
+              } else if (Math.abs(dx) < GRID * 2) {
+                d = `M${a.x},${a.y} L${a.x},${b.y} L${b.x},${b.y}`;
               } else if (side === 'left') {
                 // Both on left — route via dedicated left channel
                 // Channel X: progressively further left from the leftmost passive
@@ -726,7 +754,7 @@ export function SchematicView() {
             return (
               <g key={`net-${ni}`}>
                 {wires}
-                {sorted.map((pos, i) => (
+                {positions.map((pos, i) => (
                   <Junction key={`j${ni}-${i}`} x={pos.x} y={pos.y} />
                 ))}
               </g>
