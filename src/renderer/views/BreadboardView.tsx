@@ -617,52 +617,60 @@ export function BreadboardView({ board }: Props) {
       const passive = new Graphics();
       const isDiode = component.type === 'diode';
       const isResistor = component.package === 'axial' && !isDiode;
-      const LEAD_COLOR = 0x888888;
-      const bodyLen = isResistor ? Math.min(dist * 0.6, 36) : isDiode ? Math.min(dist * 0.5, 28) : Math.min(dist * 0.5, 24);
+      const isCap = component.type === 'capacitor';
+      const LEAD_COLOR = 0xaaaaaa;
+      const bodyLen = isResistor ? Math.min(dist * 0.55, 32) : isDiode ? Math.min(dist * 0.5, 28) : Math.min(dist * 0.45, 22);
       const leadLen = (dist - bodyLen) / 2;
 
-      // Leads
+      // Leads — silver wire
       passive.moveTo(x1, y1);
       passive.lineTo(x1 + Math.cos(angle) * leadLen, y1 + Math.sin(angle) * leadLen);
-      passive.stroke({ width: 2, color: LEAD_COLOR });
+      passive.stroke({ width: 1.5, color: LEAD_COLOR });
       passive.moveTo(x2, y2);
       passive.lineTo(x2 - Math.cos(angle) * leadLen, y2 - Math.sin(angle) * leadLen);
-      passive.stroke({ width: 2, color: LEAD_COLOR });
+      passive.stroke({ width: 1.5, color: LEAD_COLOR });
 
-      const bodyH = isResistor ? 10 : 8;
+      const bodyH = isResistor ? 8 : isDiode ? 7 : 10;
       const perpX = -Math.sin(angle) * bodyH / 2;
       const perpY = Math.cos(angle) * bodyH / 2;
       const bodyStartX = mx - Math.cos(angle) * bodyLen / 2;
       const bodyStartY = my - Math.sin(angle) * bodyLen / 2;
+      const bodyEndX = mx + Math.cos(angle) * bodyLen / 2;
+      const bodyEndY = my + Math.sin(angle) * bodyLen / 2;
 
       if (isResistor) {
-        // Resistor body
-        const bx1 = bodyStartX + perpX, by1 = bodyStartY + perpY;
-        const bx2 = bodyStartX - perpX, by2 = bodyStartY - perpY;
-        const bx3 = bodyStartX + Math.cos(angle) * bodyLen - perpX;
-        const by3 = bodyStartY + Math.sin(angle) * bodyLen - perpY;
-        const bx4 = bodyStartX + Math.cos(angle) * bodyLen + perpX;
-        const by4 = bodyStartY + Math.sin(angle) * bodyLen + perpY;
-        passive.moveTo(bx1, by1); passive.lineTo(bx2, by2); passive.lineTo(bx3, by3); passive.lineTo(bx4, by4); passive.closePath();
-        passive.fill(COLORS.passive.resistor);
-        passive.stroke({ width: 1, color: 0x9a7b4f });
+        // Fritzing-style resistor: rounded capsule body with color bands
+        // Draw capsule shape: rounded ends with straight sides
+        const capR = bodyH / 2;
 
-        // Proper 4-band color code from resistance value
+        // Left cap (semicircle)
+        passive.arc(bodyStartX, bodyStartY, capR, angle + Math.PI / 2, angle - Math.PI / 2);
+        // Top edge
+        passive.lineTo(bodyEndX + perpX, bodyEndY + perpY);
+        // Right cap (semicircle)
+        passive.arc(bodyEndX, bodyEndY, capR, angle - Math.PI / 2, angle + Math.PI / 2);
+        // Bottom edge back to start
+        passive.lineTo(bodyStartX - perpX, bodyStartY - perpY);
+        passive.closePath();
+        passive.fill(COLORS.passive.resistor);
+        passive.stroke({ width: 0.8, color: 0x8a6b44 });
+
+        // 4-band color code
         const bands = resistorBands(component.parameters['resistance'] ?? 10000);
-        const bandPositions = [0.12, 0.28, 0.44, 0.78]; // digit1, digit2, multiplier, tolerance
+        const bandPositions = [0.15, 0.30, 0.45, 0.80];
+        const bandWidths = [3, 3, 3, 2.5];
         for (let b = 0; b < bands.length; b++) {
           const t = bandPositions[b];
           const bpx = bodyStartX + Math.cos(angle) * bodyLen * t;
           const bpy = bodyStartY + Math.sin(angle) * bodyLen * t;
-          passive.moveTo(bpx + perpX * 0.95, bpy + perpY * 0.95);
-          passive.lineTo(bpx - perpX * 0.95, bpy - perpY * 0.95);
-          passive.stroke({ width: 2.5, color: bands[b] });
+          passive.moveTo(bpx + perpX * 0.92, bpy + perpY * 0.92);
+          passive.lineTo(bpx - perpX * 0.92, bpy - perpY * 0.92);
+          passive.stroke({ width: bandWidths[b], color: bands[b] });
         }
       } else if (isDiode) {
-        // Diode: cylindrical body with cathode band
-        // Body is a filled rectangle (glass/black body)
+        // Fritzing-style diode: glass/dark body with silver cathode band
         const isLED = component.parameters['vForward'] >= 1.5;
-        const bodyColor = isLED ? 0xcc2222 : 0x333333;
+        const bodyColor = isLED ? 0xcc2222 : 0x2a2a2a;
         const cathodeColor = isLED ? 0xeeeeee : 0xcccccc;
 
         const bx1 = bodyStartX + perpX, by1 = bodyStartY + perpY;
@@ -697,15 +705,64 @@ export function BreadboardView({ board }: Props) {
           passive.closePath();
           passive.fill(0x555555);
         }
+      } else if (isCap) {
+        // Capacitor — ceramic disc (small values) or electrolytic barrel (large)
+        const capValue = component.parameters['capacitance'] ?? 1e-7;
+        const isElectrolytic = capValue >= 1e-6; // 1µF and above
+
+        if (isElectrolytic) {
+          // Electrolytic: cylindrical barrel body with polarity stripe
+          const capR = bodyH / 2 + 1;
+          passive.arc(bodyStartX, bodyStartY, capR, angle + Math.PI / 2, angle - Math.PI / 2);
+          passive.lineTo(bodyEndX + perpX * 1.2, bodyEndY + perpY * 1.2);
+          passive.arc(bodyEndX, bodyEndY, capR, angle - Math.PI / 2, angle + Math.PI / 2);
+          passive.lineTo(bodyStartX - perpX * 1.2, bodyStartY - perpY * 1.2);
+          passive.closePath();
+          passive.fill(0x224488);
+          passive.stroke({ width: 1, color: 0x1a3366 });
+
+          // Negative stripe near pin 2 end
+          const stripeT = 0.75;
+          const sx = bodyStartX + Math.cos(angle) * bodyLen * stripeT;
+          const sy = bodyStartY + Math.sin(angle) * bodyLen * stripeT;
+          passive.moveTo(sx + perpX * 1.1, sy + perpY * 1.1);
+          passive.lineTo(sx - perpX * 1.1, sy - perpY * 1.1);
+          passive.stroke({ width: 3, color: 0xcccccc });
+
+          // Minus sign
+          const minusX = bodyStartX + Math.cos(angle) * bodyLen * 0.82;
+          const minusY = bodyStartY + Math.sin(angle) * bodyLen * 0.82;
+          passive.moveTo(minusX + perpX * 0.4, minusY + perpY * 0.4);
+          passive.lineTo(minusX - perpX * 0.4, minusY - perpY * 0.4);
+          passive.stroke({ width: 1.5, color: 0xeeeeee });
+        } else {
+          // Ceramic disc: flat oval body, typically orange/brown
+          const discColor = capValue < 1e-9 ? 0xcc8844 : 0xdd9922; // brown for pF, orange for nF
+          passive.ellipse(mx, my, bodyLen / 2, bodyH / 2 + 2);
+          passive.fill(discColor);
+          passive.stroke({ width: 0.8, color: 0x996622 });
+
+          // Value text on disc
+          let valText = '';
+          if (capValue >= 1e-6) valText = `${(capValue * 1e6).toFixed(0)}µ`;
+          else if (capValue >= 1e-9) valText = `${(capValue * 1e9).toFixed(0)}n`;
+          else valText = `${(capValue * 1e12).toFixed(0)}p`;
+
+          const valLabel = new Text({
+            text: valText,
+            style: new TextStyle({ fontSize: 7, fill: 0x553311, fontFamily: 'monospace', fontWeight: 'bold' }),
+          });
+          valLabel.anchor.set(0.5, 0.5);
+          valLabel.x = mx;
+          valLabel.y = my;
+          valLabel.rotation = angle;
+          container.addChild(valLabel);
+        }
       } else {
-        // Capacitor: two parallel plates with gap
-        const gapHalf = 2;
-        const p1x = mx - Math.cos(angle) * gapHalf, p1y = my - Math.sin(angle) * gapHalf;
-        const p2x = mx + Math.cos(angle) * gapHalf, p2y = my + Math.sin(angle) * gapHalf;
-        passive.moveTo(p1x + perpX, p1y + perpY); passive.lineTo(p1x - perpX, p1y - perpY);
-        passive.stroke({ width: 2.5, color: COLORS.passive.capacitor });
-        passive.moveTo(p2x + perpX, p2y + perpY); passive.lineTo(p2x - perpX, p2y - perpY);
-        passive.stroke({ width: 2.5, color: COLORS.passive.capacitor });
+        // Generic 2-pin passive fallback
+        passive.ellipse(mx, my, bodyLen / 2, bodyH / 2);
+        passive.fill(0x888888);
+        passive.stroke({ width: 1, color: 0x666666 });
       }
 
       // Hole dots
