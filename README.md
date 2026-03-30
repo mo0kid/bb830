@@ -4,7 +4,7 @@ Visual breadboard planning and circuit emulation for vintage synth voicecards.
 
 ![Electron](https://img.shields.io/badge/Electron-33+-blue) ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue) ![React](https://img.shields.io/badge/React-19-blue) ![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-green)
 
-bb830 is a macOS desktop app for designing analog synthesizer circuits on virtual BB830 breadboards, simulating them in real-time, and optionally connecting to a Raspberry Pi for hardware prototyping. Built for **AI-assisted circuit design** -- it exposes an MCP server so Claude can place components, wire circuits, run simulations, and probe signals directly alongside you.
+bb830 is a cross-platform desktop app for designing analog synthesizer circuits on virtual BB830 breadboards, simulating them in real-time, and optionally connecting to a Raspberry Pi for hardware prototyping. Built for **AI-assisted circuit design** -- it exposes an MCP server so Claude can place components, wire circuits, run simulations, and probe signals directly alongside you.
 
 ![Breadboard View](bb380_breadboard.png)
 *Multi-board breadboard view with dual A/B oscilloscope showing real-time filter comparison*
@@ -123,8 +123,8 @@ Register it in your Claude Code project's `.mcp.json`:
 
 ### Prerequisites
 
-- Node.js 18+
-- macOS (Electron desktop app)
+- [Node.js](https://nodejs.org/) 18+
+- [Git](https://git-scm.com/)
 
 ### Install & Run
 
@@ -137,11 +137,46 @@ npm run dev
 
 The app launches with an Electron window. The MCP server starts automatically on port 23340.
 
+### Platform Notes
+
+#### macOS
+Works out of the box. Uses `hiddenInset` title bar for a native look.
+
+#### Windows
+Requires [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for native Electron dependencies:
+```powershell
+npm install --global windows-build-tools   # if needed
+git clone https://github.com/mo0kid/bb830.git
+cd bb830
+npm install
+npm run dev
+```
+
+#### Linux
+Install build essentials and display libraries:
+```bash
+# Debian/Ubuntu
+sudo apt install build-essential libx11-dev libxkbfile-dev libsecret-1-dev
+
+# Fedora
+sudo dnf install gcc-c++ make libX11-devel libxkbfile-devel libsecret-devel
+
+# Arch Linux
+sudo pacman -S base-devel libx11 libxkbfile libsecret
+
+git clone https://github.com/mo0kid/bb830.git
+cd bb830
+npm install
+npm run dev
+```
+
 ### Build for Distribution
 
 ```bash
 npm run electron:build
 ```
+
+Produces platform-specific installers (`.dmg` for macOS, `.exe`/`.msi` for Windows, `.AppImage`/`.deb` for Linux).
 
 ## Tech Stack
 
