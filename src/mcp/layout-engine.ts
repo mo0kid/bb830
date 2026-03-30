@@ -54,6 +54,15 @@ export class LayoutEngine {
     this.occupied.push({ row, col, componentId });
   }
 
+  /** Mark an entire span of rows in a column as occupied */
+  markSpan(row1: number, row2: number, col: string, componentId: string) {
+    const minR = Math.min(row1, row2);
+    const maxR = Math.max(row1, row2);
+    for (let r = minR; r <= maxR; r++) {
+      this.occupied.push({ row: r, col, componentId });
+    }
+  }
+
   /** Check if a position is free */
   isFree(row: number, col: string): boolean {
     return !this.occupied.some(s => s.row === row && s.col === col);
@@ -90,7 +99,7 @@ export class LayoutEngine {
     icLabel: string,
     pinIndex: number,
     otherEnd: 'vcc' | 'gnd' | 'free',
-    preferredLength: number = 5,
+    preferredLength: number = 4,
   ): { row: number; col: string; row2: number; col2: string } | null {
     const pinInfo = this.getICPinRow(icLabel, pinIndex);
     if (!pinInfo) return null;
@@ -119,9 +128,8 @@ export class LayoutEngine {
         }
         if (!pathClear) continue;
 
-        // Mark occupied
-        this.markOccupied(row1, col, 'pending');
-        this.markOccupied(row2, col, 'pending');
+        // Mark entire span as occupied
+        this.markSpan(row1, row2, col, 'pending');
 
         return { row: row1, col, row2, col2: col };
       }
@@ -138,8 +146,7 @@ export class LayoutEngine {
         }
         if (!pathClear) continue;
 
-        this.markOccupied(row1, col, 'pending');
-        this.markOccupied(row2, col, 'pending');
+        this.markSpan(row2, row1, col, 'pending');
 
         return { row: row2, col, row2: row1, col2: col };
       }
@@ -169,8 +176,7 @@ export class LayoutEngine {
         }
         if (!allFree) continue;
 
-        this.markOccupied(startRow, col, 'pending');
-        this.markOccupied(row2, col, 'pending');
+        this.markSpan(startRow, row2, col, 'pending');
         return { row: startRow, col, row2, col2: col };
       }
     }

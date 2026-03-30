@@ -15,7 +15,11 @@
       "mcp__bb830__bb830_place_component",
       "mcp__bb830__bb830_new_project",
       "mcp__bb830__bb830_update_board_label",
-      "mcp__bb830__bb830_wire"
+      "mcp__bb830__bb830_wire",
+      "mcp__bb830__bb830_reset_layout",
+      "mcp__bb830__bb830_auto_ic",
+      "mcp__bb830__bb830_auto_passive",
+      "mcp__bb830__bb830_auto_wire"
     ]
   },
   "enableAllProjectMcpServers": true,
