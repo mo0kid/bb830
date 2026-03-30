@@ -22,7 +22,9 @@
       "mcp__bb830__bb830_auto_wire",
       "mcp__bb830__bb830_remove",
       "mcp__bb830__bb830_get_board_state",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Components: {len\\(d[\"\"placements\"\"]\\)}, Wires: {len\\(d[\"\"wires\"\"]\\)}''''\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Components: {len\\(d[\"\"placements\"\"]\\)}, Wires: {len\\(d[\"\"wires\"\"]\\)}''''\\)\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

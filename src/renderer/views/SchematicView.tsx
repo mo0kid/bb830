@@ -5,9 +5,26 @@ import { COMPONENT_LIBRARY } from '../panels/ComponentLibrary';
 import type { Component, Net } from '../../shared/netlist-types';
 import type { Board, Placement } from '../../shared/board-types';
 
-/** Derive nets from breadboard bus connections (computed, not stored) */
-function deriveNetsFromBoard(board: Board, components: Component[]): Net[] {
+/** What a dangling pin connects to */
+export type PinTerminal =
+  | { type: 'vcc' }
+  | { type: 'gnd' }
+  | { type: 'input'; label: string }
+  | { type: 'output'; label: string }
+  | { type: 'unconnected' };
+
+export interface DerivedData {
+  nets: Net[];
+  /** Map of "componentId:pinIndex" → what it terminates to */
+  terminals: Map<string, PinTerminal>;
+}
+
+/** Derive nets and terminal info from breadboard bus connections */
+function deriveFromBoard(board: Board, components: Component[]): DerivedData {
+  // Bus map: "row:side" → component pins on that bus
   const busMap = new Map<string, Array<{ componentId: string; pinIndex: number }>>();
+  // Rail map: "row:side" → which rail wires connect to it
+  const railConnections = new Map<string, 'vcc' | 'gnd'>();
 
   function addToBus(row: number, col: string, componentId: string, pinIndex: number) {
     const ci = 'abcdefghij'.indexOf(col);
@@ -21,6 +38,33 @@ function deriveNetsFromBoard(board: Board, components: Component[]): Net[] {
     }
   }
 
+  function getBusKey(row: number, col: string): string | null {
+    const ci = 'abcdefghij'.indexOf(col);
+    if (ci < 0) return null;
+    return `${row}:${ci < 5 ? 'left' : 'right'}`;
+  }
+
+  // Analyze wires for rail connections
+  for (const wire of board.wires) {
+    const from = wire.from as { row: number; col: string };
+    const to = wire.to as { row: number; col: string };
+
+    // Check if either end is a rail
+    const isFromRail = from.col.includes('+') || from.col.includes('-');
+    const isToRail = to.col.includes('+') || to.col.includes('-');
+
+    if (isFromRail && !isToRail) {
+      const rail = from.col.includes('+') ? 'vcc' : 'gnd';
+      const busKey = getBusKey(to.row, to.col);
+      if (busKey) railConnections.set(busKey, rail);
+    } else if (isToRail && !isFromRail) {
+      const rail = to.col.includes('+') ? 'vcc' : 'gnd';
+      const busKey = getBusKey(from.row, from.col);
+      if (busKey) railConnections.set(busKey, rail);
+    }
+  }
+
+  // Map component pins to buses
   for (const placement of board.placements) {
     const comp = components.find(c => c.id === placement.componentId);
     if (!comp) continue;
@@ -43,12 +87,75 @@ function deriveNetsFromBoard(board: Board, components: Component[]): Net[] {
     }
   }
 
+  // Build nets
   const nets: Net[] = [];
   for (const [busKey, entries] of busMap) {
     if (entries.length < 2) continue;
     nets.push({ id: `bus-${busKey}`, name: `bus_${busKey.replace(':', '_')}`, connections: entries });
   }
-  return nets;
+
+  // Build terminal map — for each component pin, determine what it terminates to
+  const terminals = new Map<string, PinTerminal>();
+
+  for (const placement of board.placements) {
+    const comp = components.find(c => c.id === placement.componentId);
+    if (!comp || comp.package.startsWith('DIP')) continue;
+
+    // Check each pin of the passive
+    const pinPositions: Array<{ pinIndex: number; row: number; col: string }> = [];
+    pinPositions.push({ pinIndex: 0, row: placement.pin1Position.row, col: placement.pin1Position.col });
+    if (placement.pin2Position) {
+      pinPositions.push({ pinIndex: 1, row: placement.pin2Position.row, col: placement.pin2Position.col });
+    }
+
+    for (const { pinIndex, row, col } of pinPositions) {
+      const key = `${comp.id}:${pinIndex}`;
+      const busKey = getBusKey(row, col);
+
+      // Check if this bus connects to a rail
+      if (busKey && railConnections.has(busKey)) {
+        terminals.set(key, { type: railConnections.get(busKey)! });
+        continue;
+      }
+
+      // Check if this bus connects to an IC pin (already in a net)
+      if (busKey && busMap.has(busKey)) {
+        const bus = busMap.get(busKey)!;
+        const hasIC = bus.some(e => {
+          const c = components.find(cc => cc.id === e.componentId);
+          return c && c.package.startsWith('DIP');
+        });
+        if (hasIC) continue; // Connected to IC — net handles it
+      }
+
+      // Check if this bus connects to another passive
+      if (busKey && busMap.has(busKey) && busMap.get(busKey)!.length >= 2) {
+        continue; // Connected to another component
+      }
+
+      // Dangling — determine label from context
+      const isOutput = comp.type === 'resistor' && (comp.label?.includes('4') || comp.label?.includes('5') || comp.label?.includes('6') || comp.label?.includes('7'));
+      if (isOutput) {
+        // Output resistors — their free ends are signal outputs
+        const icNet = nets.find(n => n.connections.some(c => c.componentId === comp.id));
+        const icConn = icNet?.connections.find(c => {
+          const cc = components.find(ccc => ccc.id === c.componentId);
+          return cc?.package.startsWith('DIP');
+        });
+        if (icConn) {
+          const ic = components.find(c => c.id === icConn.componentId);
+          const pinName = ic?.pins[icConn.pinIndex]?.name ?? 'OUT';
+          terminals.set(key, { type: 'output', label: pinName });
+          continue;
+        }
+      }
+
+      // Default: unconnected input
+      terminals.set(key, { type: 'input', label: comp.label ?? comp.type });
+    }
+  }
+
+  return { nets, terminals };
 }
 
 /**
@@ -58,7 +165,7 @@ function deriveNetsFromBoard(board: Board, components: Component[]): Net[] {
 
 const GRID = 20; // Base grid unit
 const IC_W = 10 * GRID;
-const PIN_SPACING = 1.5 * GRID;
+const PIN_SPACING = 2 * GRID;
 const WIRE_COLOR = '#888';
 const NET_COLORS = ['#e94560', '#3366ff', '#2ecc71', '#cc8833', '#ff8800', '#44aaaa', '#cc44cc', '#aaaa33'];
 
@@ -234,17 +341,96 @@ function Junction({ x, y }: { x: number; y: number }) {
   return <circle cx={x} cy={y} r={3} fill="#e94560" />;
 }
 
+// ---- Terminal symbols for dangling passive ends ----
+function TerminalSymbol({ x, y, terminal, side }: { x: number; y: number; terminal: PinTerminal; side: 'left' | 'right' }) {
+  const dx = side === 'left' ? -1 : 1;
+  const tx = x + dx * 15;
+
+  if (terminal.type === 'vcc') {
+    // V+ power symbol: upward arrow with line
+    return (
+      <g>
+        <line x1={x} y1={y} x2={tx} y2={y} stroke="#cc2222" strokeWidth={1.5} />
+        <line x1={tx} y1={y} x2={tx} y2={y - 12} stroke="#cc2222" strokeWidth={2} />
+        <line x1={tx - 6} y1={y - 8} x2={tx} y2={y - 14} stroke="#cc2222" strokeWidth={2} />
+        <line x1={tx + 6} y1={y - 8} x2={tx} y2={y - 14} stroke="#cc2222" strokeWidth={2} />
+        <text x={tx} y={y - 16} fill="#cc2222" fontSize={8} fontFamily="monospace" textAnchor="middle">V+</text>
+      </g>
+    );
+  }
+
+  if (terminal.type === 'gnd') {
+    // GND symbol: 3 horizontal lines
+    return (
+      <g>
+        <line x1={x} y1={y} x2={tx} y2={y} stroke="#2244bb" strokeWidth={1.5} />
+        <line x1={tx} y1={y} x2={tx} y2={y + 4} stroke="#2244bb" strokeWidth={2} />
+        <line x1={tx - 8} y1={y + 6} x2={tx + 8} y2={y + 6} stroke="#2244bb" strokeWidth={2} />
+        <line x1={tx - 5} y1={y + 10} x2={tx + 5} y2={y + 10} stroke="#2244bb" strokeWidth={1.5} />
+        <line x1={tx - 2} y1={y + 14} x2={tx + 2} y2={y + 14} stroke="#2244bb" strokeWidth={1} />
+      </g>
+    );
+  }
+
+  if (terminal.type === 'output') {
+    // Output arrow with label
+    return (
+      <g>
+        <line x1={x} y1={y} x2={tx + dx * 10} y2={y} stroke="#2ecc71" strokeWidth={1.5} />
+        <polygon
+          points={`${tx + dx * 10},${y - 5} ${tx + dx * 10},${y + 5} ${tx + dx * 20},${y}`}
+          fill="#2ecc71" opacity={0.8}
+        />
+        <text
+          x={tx + dx * 24} y={y + 4}
+          fill="#2ecc71" fontSize={8} fontFamily="monospace"
+          textAnchor={side === 'left' ? 'end' : 'start'}
+        >
+          {terminal.label}
+        </text>
+      </g>
+    );
+  }
+
+  if (terminal.type === 'input') {
+    // Input connector with label
+    return (
+      <g>
+        <line x1={x} y1={y} x2={tx} y2={y} stroke="#e94560" strokeWidth={1.5} />
+        <circle cx={tx + dx * 4} cy={y} r={4} fill="none" stroke="#e94560" strokeWidth={1.5} />
+        <text
+          x={tx + dx * 12} y={y + 4}
+          fill="#e94560" fontSize={8} fontFamily="monospace"
+          textAnchor={side === 'left' ? 'end' : 'start'}
+        >
+          {terminal.label}
+        </text>
+      </g>
+    );
+  }
+
+  // Unconnected — small X
+  return (
+    <g>
+      <line x1={x - 3} y1={y - 3} x2={x + 3} y2={y + 3} stroke="#666" strokeWidth={1} />
+      <line x1={x - 3} y1={y + 3} x2={x + 3} y2={y - 3} stroke="#666" strokeWidth={1} />
+    </g>
+  );
+}
+
 export function SchematicView() {
   const { project } = useCircuitStore();
   const { selectItem, selectedItemId } = useUIStore();
   const components = project.netlist.components;
   const board = project.boards[0];
 
-  // Auto-derive nets from breadboard bus connections
-  const nets = useMemo(() => {
-    if (!board) return [];
-    return deriveNetsFromBoard(board, components);
+  // Auto-derive nets and terminal info from breadboard bus connections
+  const derived = useMemo(() => {
+    if (!board) return { nets: [] as Net[], terminals: new Map<string, PinTerminal>() };
+    return deriveFromBoard(board, components);
   }, [board, components]);
+  const nets = derived.nets;
+  const terminals = derived.terminals;
 
   const layout = useMemo(() => {
     const ics = components.filter(c => c.package.startsWith('DIP'));
@@ -299,18 +485,21 @@ export function SchematicView() {
 
           const isLeft = icPin.x < icEntry.x + IC_W / 2;
           const passiveLen = 3 * GRID;
+          const gap = 3 * GRID; // Space between IC pin stub and passive
 
           if (isLeft) {
-            // Place horizontally to the left of the IC pin
-            const x1 = icPin.x - passiveLen;
-            passiveLayout.push({ comp: p, x1, y1: icPin.y, x2: icPin.x, y2: icPin.y, orientation: 'h' });
+            // Place horizontally to the left of the IC pin, with gap
+            const x2 = icPin.x - gap;
+            const x1 = x2 - passiveLen;
+            passiveLayout.push({ comp: p, x1, y1: icPin.y, x2, y2: icPin.y, orientation: 'h' });
             pinXY.set(`${p.id}:0`, { x: x1, y: icPin.y });
-            pinXY.set(`${p.id}:1`, { x: icPin.x, y: icPin.y });
+            pinXY.set(`${p.id}:1`, { x: x2, y: icPin.y });
           } else {
-            // Place horizontally to the right
-            const x2 = icPin.x + passiveLen;
-            passiveLayout.push({ comp: p, x1: icPin.x, y1: icPin.y, x2, y2: icPin.y, orientation: 'h' });
-            pinXY.set(`${p.id}:0`, { x: icPin.x, y: icPin.y });
+            // Place horizontally to the right, with gap
+            const x1 = icPin.x + gap;
+            const x2 = x1 + passiveLen;
+            passiveLayout.push({ comp: p, x1, y1: icPin.y, x2, y2: icPin.y, orientation: 'h' });
+            pinXY.set(`${p.id}:0`, { x: x1, y: icPin.y });
             pinXY.set(`${p.id}:1`, { x: x2, y: icPin.y });
           }
           placed = true;
@@ -347,7 +536,7 @@ export function SchematicView() {
     );
   }
 
-  const svgW = 50 * GRID;
+  const svgW = 60 * GRID;
   const svgH = Math.max(layout.totalH, 30 * GRID);
 
   return (
@@ -427,12 +616,21 @@ export function SchematicView() {
         {layout.passiveLayout.map(({ comp, x1, y1, x2, y2 }) => {
           const selected = selectedItemId === comp.id;
           const value = formatValue(comp);
+
+          // Get terminal info for both pins
+          const term0 = terminals.get(`${comp.id}:0`);
+          const term1 = terminals.get(`${comp.id}:1`);
+
           return (
             <g key={comp.id} onClick={() => selectItem(comp.id, 'component')} style={{ cursor: 'pointer' }}>
               {comp.type === 'resistor' && drawResistor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
               {comp.type === 'capacitor' && drawCapacitor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
               {comp.type === 'diode' && drawDiode(x1, y1, x2, y2, comp.label ?? '', selected)}
               {comp.type === 'potentiometer' && drawResistor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
+
+              {/* Terminal symbols at dangling ends */}
+              {term0 && <TerminalSymbol x={x1} y={y1} terminal={term0} side="left" />}
+              {term1 && <TerminalSymbol x={x2} y={y2} terminal={term1} side="right" />}
             </g>
           );
         })}
