@@ -2,7 +2,7 @@
 
 Visual breadboard planning and circuit emulation for vintage synth voicecards.
 
-![Electron](https://img.shields.io/badge/Electron-33+-blue) ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue) ![React](https://img.shields.io/badge/React-19-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+![Electron](https://img.shields.io/badge/Electron-33+-blue) ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue) ![React](https://img.shields.io/badge/React-19-blue) ![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-green)
 
 bb830 is a macOS desktop app for designing analog synthesizer circuits on virtual BB830 breadboards, simulating them in real-time, and optionally connecting to a Raspberry Pi for hardware prototyping. Built for **AI-assisted circuit design** -- it exposes an MCP server so Claude can place components, wire circuits, run simulations, and probe signals directly alongside you.
 
@@ -231,4 +231,4 @@ Then add the export to `src/models/index.ts` and a `ComponentDefinition` to `src
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](LICENSE) -- free for personal, educational, and non-commercial use. For commercial licensing, contact [mo0kid](https://github.com/mo0kid).
