@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(electron --version)",
+      "WebSearch",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx tsx:*)",
+      "Bash(curl:*)",
+      "mcp__bb830__bb830_get_netlist",
+      "mcp__bb830__bb830_place_component",
+      "mcp__bb830__bb830_new_project",
+      "mcp__bb830__bb830_update_board_label",
+      "mcp__bb830__bb830_wire"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "bb830"
+  ]
+}

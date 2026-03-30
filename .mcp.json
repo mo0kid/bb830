@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "bb830": {
+      "command": "npx",
+      "args": ["tsx", "/Users/davewhiting/Developer/bb830/src/mcp/server.ts"]
+    }
+  }
+}

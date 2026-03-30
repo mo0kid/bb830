@@ -1,0 +1,12 @@
+appId: com.bb830.app
+productName: bb830
+directories:
+  output: release
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+files:
+  - dist/**/*
+  - dist-electron/**/*
