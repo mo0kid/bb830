@@ -69,4 +69,5 @@ export type ComponentCategory =
   | 'diode'
   | 'resistor'
   | 'capacitor'
-  | 'potentiometer';
+  | 'potentiometer'
+  | 'dac';

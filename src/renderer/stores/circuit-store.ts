@@ -45,7 +45,9 @@ interface CircuitState {
 
 let nextBoardNum = 2;
 
-export const useCircuitStore = create<CircuitState>((set, get) => ({
+// Persist store across Vite HMR reloads
+const _g = globalThis as any;
+const _createStore = () => create<CircuitState>((set, get) => ({
   project: createEmptyProject('Untitled'),
   currentBoardId: 'board-1',
   filePath: null,
@@ -259,3 +261,5 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
     return get().project.boards.find(b => b.id === boardId);
   },
 }));
+if (!_g.__bb830_circuit_store) _g.__bb830_circuit_store = _createStore();
+export const useCircuitStore: ReturnType<typeof _createStore> = _g.__bb830_circuit_store;

@@ -10,7 +10,9 @@ interface SimState {
   status: SimStatus;
   fidelity: Fidelity;
   probeNetId: string | null;
+  probeNetIdB: string | null;
   probeData: Float32Array | null;
+  probeDataB: Float32Array | null;
   errorMessage: string | null;
   audioContext: AudioContext | null;
   simulator: Simulator;
@@ -18,6 +20,7 @@ interface SimState {
   // Actions
   setFidelity: (fidelity: Fidelity) => void;
   setProbeNet: (netId: string | null) => void;
+  setProbeNetB: (netId: string | null) => void;
   start: (
     components: Array<{ id: string; type: string; parameters: Record<string, number> }>,
     nets: Array<{ id: string; connections: Array<{ componentId: string; pinIndex: number }> }>,
@@ -37,11 +40,14 @@ const simulator = new Simulator();
 // ScriptProcessor node reference (for real-time audio output)
 let scriptNode: ScriptProcessorNode | null = null;
 
-export const useSimStore = create<SimState>((set, get) => ({
+const _gs = globalThis as any;
+const _createSimStore = () => create<SimState>((set, get) => ({
   status: 'stopped',
   fidelity: Fidelity.Behavioral,
   probeNetId: null,
+  probeNetIdB: null,
   probeData: null,
+  probeDataB: null,
   errorMessage: null,
   audioContext: null,
   simulator,
@@ -49,6 +55,8 @@ export const useSimStore = create<SimState>((set, get) => ({
   setFidelity: (fidelity) => set({ fidelity }),
 
   setProbeNet: (netId) => set({ probeNetId: netId }),
+
+  setProbeNetB: (netId) => set({ probeNetIdB: netId }),
 
   start: (components, nets) => {
     const state = get();
@@ -86,19 +94,27 @@ export const useSimStore = create<SimState>((set, get) => ({
     scriptNode = ctx.createScriptProcessor(bufferSize, 0, 2);
 
     const probeNetId = state.probeNetId;
-    const probeBuf = new Float32Array(bufferSize);
+    const probeNetIdB = state.probeNetIdB;
+    const probeBufA = new Float32Array(bufferSize);
+    const probeBufB = new Float32Array(bufferSize);
 
     scriptNode.onaudioprocess = (e) => {
       const outputL = e.outputBuffer.getChannelData(0);
       const outputR = e.outputBuffer.getChannelData(1);
 
-      simulator.fillAudioBuffer(outputL, outputR, probeNetId ?? undefined);
+      simulator.fillAudioBuffer(outputL, outputR, probeNetId ?? undefined, probeNetIdB ?? undefined);
 
       // Capture probe data for waveform display
+      const updates: Partial<SimState> = {};
       if (probeNetId) {
-        probeBuf.set(outputL);
-        set({ probeData: new Float32Array(probeBuf) });
+        probeBufA.set(outputL);
+        updates.probeData = new Float32Array(probeBufA);
       }
+      if (probeNetIdB) {
+        probeBufB.set(outputR);
+        updates.probeDataB = new Float32Array(probeBufB);
+      }
+      if (probeNetId || probeNetIdB) set(updates);
     };
 
     scriptNode.connect(ctx.destination);
@@ -152,3 +168,5 @@ export const useSimStore = create<SimState>((set, get) => ({
     simulator.setParameter(componentId, key, value);
   },
 }));
+if (!_gs.__bb830_sim_store) _gs.__bb830_sim_store = _createSimStore();
+export const useSimStore: ReturnType<typeof _createSimStore> = _gs.__bb830_sim_store;

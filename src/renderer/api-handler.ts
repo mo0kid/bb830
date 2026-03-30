@@ -256,6 +256,11 @@ const handlers: Record<string, ActionHandler> = {
     return { ok: true, probeNetId: netId };
   },
 
+  'set_probe_b': ({ netId }) => {
+    useSimStore.getState().setProbeNetB(netId);
+    return { ok: true, probeNetIdB: netId };
+  },
+
   'get_nets': () => {
     const { project } = useCircuitStore.getState();
     return project.netlist.nets.map(n => ({ id: n.id, name: n.name, connections: n.connections }));

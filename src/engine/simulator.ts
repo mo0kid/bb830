@@ -199,18 +199,22 @@ export class Simulator {
     return this.netVoltages.get(netId) ?? 0;
   }
 
-  /** Get output buffer for AudioWorklet (stereo) */
-  fillAudioBuffer(outputL: Float32Array, outputR: Float32Array, probeNetId?: string): void {
+  /** Get output buffer for AudioWorklet (stereo).
+   *  Probe A → left channel, Probe B → right channel. */
+  fillAudioBuffer(outputL: Float32Array, outputR: Float32Array, probeNetIdA?: string, probeNetIdB?: string): void {
     const len = outputL.length;
     for (let i = 0; i < len; i++) {
       this.processSample();
 
-      // Route a probed net to audio output, scaled to -1..1
-      if (probeNetId) {
-        const v = this.netVoltages.get(probeNetId) ?? 0;
-        const scaled = v / 5.0;  // ±5V → ±1.0
-        outputL[i] = scaled;
-        outputR[i] = scaled;
+      // Probe A → left channel
+      if (probeNetIdA) {
+        outputL[i] = (this.netVoltages.get(probeNetIdA) ?? 0) / 5.0;
+      }
+      // Probe B → right channel (or duplicate A if no B)
+      if (probeNetIdB) {
+        outputR[i] = (this.netVoltages.get(probeNetIdB) ?? 0) / 5.0;
+      } else if (probeNetIdA) {
+        outputR[i] = outputL[i];
       }
     }
   }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, globalShortcut } from 'electron';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFile, writeFile } from 'fs/promises';
@@ -80,6 +80,11 @@ ipcMain.handle('project:save', async (_event, project: Project, filePath?: strin
 app.whenReady().then(() => {
   createWindow();
   startApiServer();
+
+  // Cmd+R to reload renderer
+  globalShortcut.register('CommandOrControl+R', () => {
+    mainWindow?.webContents.reload();
+  });
 });
 
 app.on('window-all-closed', () => {

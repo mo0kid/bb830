@@ -159,6 +159,11 @@ server.tool('bb830_get_nets', 'List all nets', {}, async () => {
   return { content: [{ type: 'text' as const, text: resultText(result) }] };
 });
 
+server.tool('bb830_derive_nets', 'Auto-derive nets from breadboard bus connections', {}, async () => {
+  const result = await sendCommand('derive_nets', {});
+  return { content: [{ type: 'text' as const, text: resultText(result) }] };
+});
+
 // ---- Smart Layout ----
 
 // Pin definitions for auto-layout

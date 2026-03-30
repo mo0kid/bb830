@@ -1,8 +1,29 @@
-import { useRef, useCallback, useState, type WheelEvent, type MouseEvent } from 'react';
+import React, { useRef, useCallback, useState, type WheelEvent, type MouseEvent } from 'react';
 import { useCircuitStore } from '../stores/circuit-store';
 import { useUIStore } from '../stores/ui-store';
 import { BreadboardView } from './BreadboardView';
 import { SchematicView } from './SchematicView';
+
+class SchematicErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 20, color: '#e94560', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: '100%' }}>
+          <h3>Schematic Error</h3>
+          <p>{this.state.error.message}</p>
+          <pre style={{ fontSize: 11, color: '#888' }}>{this.state.error.stack}</pre>
+          <button onClick={() => this.setState({ error: null })} style={{ marginTop: 10, padding: '4px 12px', background: '#333', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const BOARD_SLOT_WIDTH = 500;
 const BOARD_SLOT_HEIGHT = 960;
@@ -42,26 +63,28 @@ export function Workspace() {
     setIsPanning(false);
   }, []);
 
-  if (viewMode === 'schematic') {
-    return (
-      <div style={styles.workspace}>
-        <SchematicView />
-      </div>
-    );
-  }
-
   // Multi-board breadboard layout
   const boardCount = project.boards.length;
+  const isSchematic = viewMode === 'schematic';
 
   return (
     <div
       style={styles.workspace}
-      onWheel={handleWheel}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onWheel={isSchematic ? undefined : handleWheel}
+      onMouseDown={isSchematic ? undefined : handleMouseDown}
+      onMouseMove={isSchematic ? undefined : handleMouseMove}
+      onMouseUp={isSchematic ? undefined : handleMouseUp}
+      onMouseLeave={isSchematic ? undefined : handleMouseUp}
     >
+      {/* Schematic overlay — rendered on top, breadboard stays alive underneath */}
+      {isSchematic && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 20, background: '#111' }}>
+          <SchematicErrorBoundary>
+            <SchematicView />
+          </SchematicErrorBoundary>
+        </div>
+      )}
+
       <div style={{
         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
         transformOrigin: '0 0',
@@ -69,6 +92,7 @@ export function Workspace() {
         display: 'flex',
         gap: BOARD_GAP,
         padding: 20,
+        visibility: isSchematic ? 'hidden' : 'visible',
       }}>
         {project.boards.map((board, idx) => (
           <div

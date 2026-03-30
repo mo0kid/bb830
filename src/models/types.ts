@@ -79,8 +79,10 @@ export interface ICModel {
 }
 
 // ---- Model Registry ----
-
-const registry = new Map<string, ICModel>();
+// Stash on globalThis so it survives Vite HMR reloads
+const _g = globalThis as any;
+if (!_g.__bb830_model_registry) _g.__bb830_model_registry = new Map<string, ICModel>();
+const registry: Map<string, ICModel> = _g.__bb830_model_registry;
 
 export function registerModel(model: ICModel): void {
   registry.set(model.type, model);

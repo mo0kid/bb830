@@ -479,10 +479,19 @@ function TerminalSymbol({ x, y, terminal, side, vccCol, gndCol }: {
 }
 
 export function SchematicView() {
-  const { project } = useCircuitStore();
+  const { project, currentBoardId } = useCircuitStore();
   const { selectItem, selectedItemId } = useUIStore();
-  const components = project.netlist.components;
-  const board = project.boards[0];
+  const board = project.boards.find(b => b.id === currentBoardId) ?? project.boards[0];
+
+  // Only show components placed on the current board
+  const boardComponentIds = useMemo(() => {
+    if (!board) return new Set<string>();
+    return new Set(board.placements.map(p => p.componentId));
+  }, [board]);
+  const components = useMemo(
+    () => project.netlist.components.filter(c => boardComponentIds.has(c.id)),
+    [project.netlist.components, boardComponentIds],
+  );
 
   // Auto-derive nets and terminal info from breadboard bus connections
   const derived = useMemo(() => {
