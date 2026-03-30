@@ -431,7 +431,8 @@ function TerminalSymbol({ x, y, terminal, side, vccCol, gndCol }: {
   const signalColor = SIGNAL_COLORS[label] ?? (terminal.type === 'output' ? '#2ecc71' : '#e94560');
 
   if (terminal.type === 'output') {
-    const ox = x + dx * gap;
+    // Output terminals between signal joins and V+/GND
+    const ox = side === 'left' ? x - 5 * GRID : x + 5 * GRID;
     return (
       <g>
         <line x1={x} y1={y} x2={ox} y2={y} stroke={signalColor} strokeWidth={1.5} />
@@ -451,7 +452,8 @@ function TerminalSymbol({ x, y, terminal, side, vccCol, gndCol }: {
   }
 
   if (terminal.type === 'input') {
-    const ox = x + dx * gap;
+    // Input terminals between signal joins and V+/GND
+    const ox = side === 'left' ? x - 5 * GRID : x + 5 * GRID;
     return (
       <g>
         <line x1={x} y1={y} x2={ox} y2={y} stroke={signalColor} strokeWidth={1.5} />
@@ -502,7 +504,7 @@ export function SchematicView() {
       const pps = Math.ceil(ic.pins.length / 2);
       const h = pps * PIN_SPACING + GRID;
       icPos.push({ comp: ic, x: IC_X, y: icY, h });
-      icY += h + 3 * GRID;
+      icY += h + 6 * GRID;
     }
 
     // Build pin position map
@@ -596,12 +598,22 @@ export function SchematicView() {
         const isPowerCap = p.type === 'capacitor' && (pin0Rail?.type === 'vcc' || pin0Rail?.type === 'gnd' || pin1Rail?.type === 'vcc' || pin1Rail?.type === 'gnd');
 
         if (isPowerCap && icPos.length > 0) {
-          // Place vertically between V+ and GND, far right with own column
-          const px = 70 * GRID - 6 * GRID - fallbackPowerIdx * 5 * GRID;
-          const midY = icPos.reduce((s, ic) => s + ic.y + ic.h / 2, 0) / icPos.length;
-          passiveLayout.push({ comp: p, x1: px, y1: midY - 2 * GRID, x2: px, y2: midY + 2 * GRID, orientation: 'v' });
-          pinXY.set(`${p.id}:0`, { x: px, y: midY - 2 * GRID });
-          pinXY.set(`${p.id}:1`, { x: px, y: midY + 2 * GRID });
+          // Place in the gap between ICs, vertically with V+ top and GND bottom
+          const sortedICs = [...icPos].sort((a, b) => a.y - b.y);
+          let gapY: number;
+          if (sortedICs.length >= 2) {
+            const gapTop = sortedICs[0].y + sortedICs[0].h;
+            const gapBot = sortedICs[1].y;
+            gapY = gapTop + (gapBot - gapTop) / 2;
+          } else {
+            gapY = sortedICs[0].y + sortedICs[0].h + 3 * GRID;
+          }
+          // Power caps go outside all other passives, in the gap between ICs
+          const rightEdge = passiveLayout.reduce((max, pl) => Math.max(max, pl.x1, pl.x2), sortedICs[0].x + IC_W);
+          const px = rightEdge + 4 * GRID + fallbackPowerIdx * 4 * GRID;
+          passiveLayout.push({ comp: p, x1: px, y1: gapY - 2 * GRID, x2: px, y2: gapY + 2 * GRID, orientation: 'v' });
+          pinXY.set(`${p.id}:0`, { x: px, y: gapY - 2 * GRID });
+          pinXY.set(`${p.id}:1`, { x: px, y: gapY + 2 * GRID });
           fallbackPowerIdx++;
         } else {
           const fallbackIdx = passiveLayout.length;
@@ -643,27 +655,30 @@ export function SchematicView() {
   const joinedWires = joinedWiresList;
 
   // Routing column system — layers allocated outward from IC edges
-  // Each side (left/right) gets columns for: signal joins, then I/O terminals, then V+, then GND
+  // Order from IC outward: passives → signal joins → I/O → V+ → GND
   const COL_SPACING_RT = GRID;
   const icLeftX = layout.icPos.length > 0 ? Math.min(...layout.icPos.map(p => p.x)) - GRID : 10 * GRID;
   const icRightX = layout.icPos.length > 0 ? Math.max(...layout.icPos.map(p => p.x + IC_W)) + GRID : 20 * GRID;
-  // Passive edges (furthest passive from IC)
-  const passiveLeftX = layout.passiveLayout.reduce((min, p) => Math.min(min, p.x1, p.x2), icLeftX) - GRID;
-  const passiveRightX = layout.passiveLayout.reduce((max, p) => Math.max(max, p.x1, p.x2), icRightX) + GRID;
 
-  // Left side columns (going further left):
+  // Passive edges (furthest non-power passive from IC)
+  const nonPowerPassives = layout.passiveLayout.filter(p => p.orientation !== 'v');
+  const passiveLeftX = nonPowerPassives.reduce((min, p) => Math.min(min, p.x1, p.x2), icLeftX) - GRID;
+  const passiveRightX = nonPowerPassives.reduce((max, p) => Math.max(max, p.x1, p.x2), icRightX) + GRID;
+
+  // Left side columns (going further left from passives):
+  // Layer 1: Signal joins (closest to passives)
   const LEFT_SIGNAL_COL = (i: number) => passiveLeftX - 2 * GRID - i * COL_SPACING_RT;
-  const LEFT_IO_COL = passiveLeftX - GRID;
+  // Layer 2: V+ (outside signal joins)
   const LEFT_VCC_COL = passiveLeftX - 6 * GRID;
-  const LEFT_GND_COL = passiveLeftX - 3 * GRID;
+  // Layer 3: GND (outermost)
+  const LEFT_GND_COL = passiveLeftX - 8 * GRID;
 
-  // Right side columns (going further right):
+  // Right side columns (going further right from passives):
   const RIGHT_SIGNAL_COL = (i: number) => passiveRightX + 2 * GRID + i * COL_SPACING_RT;
-  const RIGHT_IO_COL = passiveRightX + GRID;
-  const RIGHT_VCC_COL = passiveRightX + 3 * GRID;
-  const RIGHT_GND_COL = passiveRightX + 6 * GRID;
+  const RIGHT_VCC_COL = passiveRightX + 6 * GRID;
+  const RIGHT_GND_COL = passiveRightX + 8 * GRID;
 
-  const svgW = 80 * GRID;
+  const svgW = 90 * GRID;
   const svgH = Math.max(layout.totalH, 30 * GRID);
 
   return (
@@ -839,24 +854,55 @@ export function SchematicView() {
           );
         })}
 
-        {/* Joined terminal connections — routed on dedicated signal columns OUTSIDE everything */}
+        {/* Joined terminal connections — routed OUTSIDE everything, never through ICs */}
         {joinedWires.map(({ from, to, color, label }, i) => {
           const icCx = layout.icPos.length > 0 ? layout.icPos[0].x + IC_W / 2 : svgW / 2;
-          const bothLeft = from.x < icCx && to.x < icCx;
+          const fromLeft = from.x < icCx;
+          const toLeft = to.x < icCx;
+          const bothLeft = fromLeft && toLeft;
+          const bothRight = !fromLeft && !toLeft;
 
-          // Use dedicated signal columns — always outside all passives and terminals
-          const routeX = bothLeft
-            ? LEFT_SIGNAL_COL(i)
-            : RIGHT_SIGNAL_COL(i);
+          let d: string;
+
+          if (bothLeft) {
+            // Both on left — simple left-side route
+            const routeX = LEFT_SIGNAL_COL(i);
+            d = `M${from.x},${from.y} L${routeX},${from.y} L${routeX},${to.y} L${to.x},${to.y}`;
+          } else if (bothRight) {
+            // Both on right — simple right-side route
+            const routeX = RIGHT_SIGNAL_COL(i);
+            d = `M${from.x},${from.y} L${routeX},${from.y} L${routeX},${to.y} L${to.x},${to.y}`;
+          } else {
+            // Cross-side: route around ICs via the LEFT side (outside everything)
+            const routeX = LEFT_SIGNAL_COL(i);
+            // Find gap between ICs for horizontal crossing
+            const sortedICs = [...layout.icPos].sort((a, b) => a.y - b.y);
+            let gapY = (from.y + to.y) / 2; // fallback
+            if (sortedICs.length >= 2) {
+              for (let g = 0; g < sortedICs.length - 1; g++) {
+                const gTop = sortedICs[g].y + sortedICs[g].h;
+                const gBot = sortedICs[g + 1].y;
+                if (gBot - gTop > GRID) {
+                  gapY = gTop + (gBot - gTop) / 2;
+                  break;
+                }
+              }
+            }
+            // Route: from → left column → down to gap → across gap → right to destination → destination
+            const rightX = Math.max(from.x, to.x);
+            const leftPt = fromLeft ? from : to;
+            const rightPt = fromLeft ? to : from;
+            d = `M${leftPt.x},${leftPt.y} L${routeX},${leftPt.y} L${routeX},${gapY} L${rightPt.x},${gapY} L${rightPt.x},${rightPt.y}`;
+          }
+
+          // Label position: on the vertical segment
+          const labelX = bothLeft ? LEFT_SIGNAL_COL(i) : bothRight ? RIGHT_SIGNAL_COL(i) : LEFT_SIGNAL_COL(i);
 
           return (
             <g key={`join-${i}`}>
-              <path
-                d={`M${from.x},${from.y} L${routeX},${from.y} L${routeX},${to.y} L${to.x},${to.y}`}
-                fill="none" stroke={color} strokeWidth={2} strokeDasharray="6 3"
-              />
+              <path d={d} fill="none" stroke={color} strokeWidth={2} strokeDasharray="6 3" />
               <text
-                x={routeX - 4} y={(from.y + to.y) / 2 + 4}
+                x={labelX - 6} y={(from.y + to.y) / 2 + 4}
                 fill={color} fontSize={9} fontFamily="monospace" fontWeight="bold"
                 textAnchor="end"
               >
