@@ -130,15 +130,13 @@ function deriveFromBoard(board: Board, components: Component[]): DerivedData {
       }
     }
 
-    // Now set terminals for each pin
+    // Set terminals for each pin that isn't connected to an IC
     for (const { pinIndex, row, col } of pinPositions) {
       const key = `${comp.id}:${pinIndex}`;
       const busKey = getBusKey(row, col);
 
-      if (pinIndex === innerPinIdx) {
-        // This pin connects to IC — no terminal needed (wire handles it)
-        continue;
-      }
+      // Skip the IC-connected pin — the horizontal wire handles it
+      if (pinIndex === innerPinIdx) continue;
 
       // Check if this pin connects to a power rail
       if (busKey && railConnections.has(busKey)) {
@@ -146,25 +144,49 @@ function deriveFromBoard(board: Board, components: Component[]): DerivedData {
         continue;
       }
 
-      // Check if this pin connects to another passive (shared bus)
-      if (busKey && busMap.has(busKey)) {
-        const bus = busMap.get(busKey)!;
-        const hasOtherComponent = bus.some(e => e.componentId !== comp.id);
-        if (hasOtherComponent) {
-          // Connected to another component — will be drawn by that net
-          continue;
-        }
-      }
+      // This is the outer pin — label describes the SIGNAL, not the IC pin
+      if (innerPinIdx >= 0) {
+        const icPinUpper = icPinName.toUpperCase();
 
-      // This is the outer pin — determine what it represents
-      // If the IC pin is an output type, this passive's outer end is a signal output
-      const icPinType = icPinName.toUpperCase();
-      if (icPinType.includes('OUT') || icPinType === 'RAMP OUT' || icPinType === 'PULSE OUT' || icPinType === 'TRI OUT') {
-        terminals.set(key, { type: 'output', label: icPinName });
-      } else if (icPinType.includes('IN') || icPinType.includes('CV') || icPinType.includes('SYNC')) {
-        terminals.set(key, { type: 'input', label: icPinName || comp.label || '' });
+        // Map IC pin names to meaningful signal labels
+        const signalLabels: Record<string, string> = {
+          'RAMP OUT': 'SAW',
+          'PULSE OUT': 'PULSE',
+          'TRI OUT': 'TRI',
+          'FREQ CV IN': '1V/OCT',
+          'FREQ CV SUM': 'CV',
+          'PW IN': 'PW',
+          'HARD SYNC': 'SYNC',
+          'SOFT SYNC': 'SYNC',
+          'SCALE IN': 'SCALE',
+          'SCALE TRIM': 'TRIM',
+          'COMP IN': 'COMP',
+          'TIMING RES': 'V+',
+          'TIMING CAP': 'GND',
+          'OUT A': 'SAW OUT',
+          'OUT B': 'PULSE OUT',
+          'IN A-': 'SAW IN',
+          'IN A+': 'GND',
+          'IN B-': 'PULSE IN',
+          'IN B+': 'GND',
+          'V+': 'V+',
+          'V-': 'V-',
+          'GND': 'GND',
+        };
+
+        const label = signalLabels[icPinName] ?? comp.label ?? icPinName;
+
+        // Determine type from signal context
+        if (label === 'V+') {
+          terminals.set(key, { type: 'vcc' });
+        } else if (label === 'GND' || label === 'V-') {
+          terminals.set(key, { type: 'gnd' });
+        } else if (icPinUpper.includes('OUT') || icPinUpper.includes('RAMP') || icPinUpper.includes('PULSE') || icPinUpper.includes('TRI')) {
+          terminals.set(key, { type: 'output', label });
+        } else {
+          terminals.set(key, { type: 'input', label });
+        }
       } else {
-        // Generic unconnected
         terminals.set(key, { type: 'input', label: comp.label ?? comp.type });
       }
     }
@@ -292,15 +314,18 @@ function drawCapacitor(x1: number, y1: number, x2: number, y2: number, label: st
   return elems;
 }
 
-function drawDiode(x1: number, y1: number, x2: number, y2: number, label: string, selected: boolean) {
+function drawDiode(x1: number, y1: number, x2: number, y2: number, label: string, selected: boolean, anodeX?: number) {
   const color = selected ? '#00ff88' : '#ff8800';
   const midX = (x1 + x2) / 2;
   const sz = 7;
+  // Direction: triangle points from anode to cathode
+  // If anodeX is provided, use it to determine direction; otherwise assume left-to-right
+  const dir = anodeX !== undefined ? (anodeX < midX ? 1 : -1) : 1;
   return [
-    <line key="l1" x1={x1} y1={y1} x2={midX - sz} y2={y1} stroke={WIRE_COLOR} strokeWidth={1.5} />,
-    <polygon key="tri" points={`${midX - sz},${y1 - sz} ${midX - sz},${y1 + sz} ${midX + sz},${y1}`} fill="none" stroke={color} strokeWidth={2} />,
-    <line key="bar" x1={midX + sz} y1={y1 - sz} x2={midX + sz} y2={y1 + sz} stroke={color} strokeWidth={2} />,
-    <line key="l2" x1={midX + sz} y1={y1} x2={x2} y2={y1} stroke={WIRE_COLOR} strokeWidth={1.5} />,
+    <line key="l1" x1={x1} y1={y1} x2={midX - dir * sz} y2={y1} stroke={WIRE_COLOR} strokeWidth={1.5} />,
+    <polygon key="tri" points={`${midX - dir * sz},${y1 - sz} ${midX - dir * sz},${y1 + sz} ${midX + dir * sz},${y1}`} fill="none" stroke={color} strokeWidth={2} />,
+    <line key="bar" x1={midX + dir * sz} y1={y1 - sz} x2={midX + dir * sz} y2={y1 + sz} stroke={color} strokeWidth={2} />,
+    <line key="l2" x1={midX + dir * sz} y1={y1} x2={x2} y2={y1} stroke={WIRE_COLOR} strokeWidth={1.5} />,
     <text key="lbl" x={midX} y={y1 - 12} fill="#aaa" fontSize={9} fontFamily="monospace" fontWeight="bold" textAnchor="middle">{label}</text>,
   ];
 }
@@ -357,29 +382,32 @@ function Junction({ x, y }: { x: number; y: number }) {
 }
 
 // ---- Terminal symbols for dangling passive ends ----
-function TerminalSymbol({ x, y, terminal, side }: { x: number; y: number; terminal: PinTerminal; side: 'left' | 'right' }) {
+function TerminalSymbol({ x, y, terminal, side, vccCol, gndCol }: {
+  x: number; y: number; terminal: PinTerminal; side: 'left' | 'right';
+  vccCol: number; gndCol: number;
+}) {
   const dx = side === 'left' ? -1 : 1;
-  const tx = x + dx * GRID * 1.5;
+  const gap = GRID * 1.5;
 
   if (terminal.type === 'vcc') {
-    // V+ power symbol: upward arrow with line
+    const tx = vccCol;
     return (
       <g>
         <line x1={x} y1={y} x2={tx} y2={y} stroke="#cc2222" strokeWidth={1.5} />
-        <line x1={tx} y1={y} x2={tx} y2={y - 12} stroke="#cc2222" strokeWidth={2} />
-        <line x1={tx - 6} y1={y - 8} x2={tx} y2={y - 14} stroke="#cc2222" strokeWidth={2} />
-        <line x1={tx + 6} y1={y - 8} x2={tx} y2={y - 14} stroke="#cc2222" strokeWidth={2} />
-        <text x={tx} y={y - 16} fill="#cc2222" fontSize={8} fontFamily="monospace" textAnchor="middle">V+</text>
+        <line x1={tx} y1={y} x2={tx} y2={y - 8} stroke="#cc2222" strokeWidth={2} />
+        <line x1={tx - 6} y1={y - 4} x2={tx} y2={y - 10} stroke="#cc2222" strokeWidth={2} />
+        <line x1={tx + 6} y1={y - 4} x2={tx} y2={y - 10} stroke="#cc2222" strokeWidth={2} />
+        <text x={tx} y={y - 14} fill="#cc2222" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">V+</text>
       </g>
     );
   }
 
   if (terminal.type === 'gnd') {
-    // GND symbol: 3 horizontal lines
+    const tx = gndCol;
     return (
       <g>
         <line x1={x} y1={y} x2={tx} y2={y} stroke="#2244bb" strokeWidth={1.5} />
-        <line x1={tx} y1={y} x2={tx} y2={y + 4} stroke="#2244bb" strokeWidth={2} />
+        <line x1={tx} y1={y + 2} x2={tx} y2={y + 4} stroke="#2244bb" strokeWidth={2} />
         <line x1={tx - 8} y1={y + 6} x2={tx + 8} y2={y + 6} stroke="#2244bb" strokeWidth={2} />
         <line x1={tx - 5} y1={y + 10} x2={tx + 5} y2={y + 10} stroke="#2244bb" strokeWidth={1.5} />
         <line x1={tx - 2} y1={y + 14} x2={tx + 2} y2={y + 14} stroke="#2244bb" strokeWidth={1} />
@@ -387,18 +415,33 @@ function TerminalSymbol({ x, y, terminal, side }: { x: number; y: number; termin
     );
   }
 
+  // Signal color matching — paired signals share the same color
+  const SIGNAL_COLORS: Record<string, string> = {
+    'SAW': '#ff8844',     'SAW OUT': '#ff8844',    'SAW IN': '#ff8844',
+    'PULSE': '#cc44cc',   'PULSE OUT': '#cc44cc',  'PULSE IN': '#cc44cc',
+    'TRI': '#44cc44',     'TRI OUT': '#44cc44',    'TRI IN': '#44cc44',
+    '1V/OCT': '#44aadd',  'CV': '#44aadd',
+    'PW': '#ddaa44',
+    'SYNC': '#dd4444',
+    'SCALE': '#aa88cc',   'TRIM': '#aa88cc',
+    'COMP': '#888888',
+  };
+
+  const label = (terminal.type === 'output' || terminal.type === 'input') ? terminal.label : '';
+  const signalColor = SIGNAL_COLORS[label] ?? (terminal.type === 'output' ? '#2ecc71' : '#e94560');
+
   if (terminal.type === 'output') {
-    // Output arrow with label
+    const ox = x + dx * gap;
     return (
       <g>
-        <line x1={x} y1={y} x2={tx + dx * 10} y2={y} stroke="#2ecc71" strokeWidth={1.5} />
+        <line x1={x} y1={y} x2={ox} y2={y} stroke={signalColor} strokeWidth={1.5} />
         <polygon
-          points={`${tx + dx * 10},${y - 5} ${tx + dx * 10},${y + 5} ${tx + dx * 20},${y}`}
-          fill="#2ecc71" opacity={0.8}
+          points={`${ox},${y - 5} ${ox},${y + 5} ${ox + dx * 10},${y}`}
+          fill={signalColor} opacity={0.8}
         />
         <text
-          x={tx + dx * 24} y={y + 4}
-          fill="#2ecc71" fontSize={8} fontFamily="monospace"
+          x={ox + dx * 14} y={y + 4}
+          fill={signalColor} fontSize={9} fontFamily="monospace" fontWeight="bold"
           textAnchor={side === 'left' ? 'end' : 'start'}
         >
           {terminal.label}
@@ -408,14 +451,14 @@ function TerminalSymbol({ x, y, terminal, side }: { x: number; y: number; termin
   }
 
   if (terminal.type === 'input') {
-    // Input connector with label
+    const ox = x + dx * gap;
     return (
       <g>
-        <line x1={x} y1={y} x2={tx} y2={y} stroke="#e94560" strokeWidth={1.5} />
-        <circle cx={tx + dx * 4} cy={y} r={4} fill="none" stroke="#e94560" strokeWidth={1.5} />
+        <line x1={x} y1={y} x2={ox} y2={y} stroke={signalColor} strokeWidth={1.5} />
+        <circle cx={ox + dx * 4} cy={y} r={4} fill="none" stroke={signalColor} strokeWidth={1.5} />
         <text
-          x={tx + dx * 12} y={y + 4}
-          fill="#e94560" fontSize={8} fontFamily="monospace"
+          x={ox + dx * 12} y={y + 4}
+          fill={signalColor} fontSize={9} fontFamily="monospace" fontWeight="bold"
           textAnchor={side === 'left' ? 'end' : 'start'}
         >
           {terminal.label}
@@ -553,13 +596,12 @@ export function SchematicView() {
         const isPowerCap = p.type === 'capacitor' && (pin0Rail?.type === 'vcc' || pin0Rail?.type === 'gnd' || pin1Rail?.type === 'vcc' || pin1Rail?.type === 'gnd');
 
         if (isPowerCap && icPos.length > 0) {
-          // Place vertically between V+ and GND, to the right of the last IC
-          const lastIC = icPos[icPos.length - 1];
-          const px = lastIC.x + IC_W + 8 * GRID + fallbackPowerIdx * 4 * GRID;
-          const py = lastIC.y + lastIC.h / 2;
-          passiveLayout.push({ comp: p, x1: px, y1: py - 1.5 * GRID, x2: px, y2: py + 1.5 * GRID, orientation: 'v' });
-          pinXY.set(`${p.id}:0`, { x: px, y: py - 1.5 * GRID });
-          pinXY.set(`${p.id}:1`, { x: px, y: py + 1.5 * GRID });
+          // Place vertically between V+ and GND, far right with own column
+          const px = 70 * GRID - 6 * GRID - fallbackPowerIdx * 5 * GRID;
+          const midY = icPos.reduce((s, ic) => s + ic.y + ic.h / 2, 0) / icPos.length;
+          passiveLayout.push({ comp: p, x1: px, y1: midY - 2 * GRID, x2: px, y2: midY + 2 * GRID, orientation: 'v' });
+          pinXY.set(`${p.id}:0`, { x: px, y: midY - 2 * GRID });
+          pinXY.set(`${p.id}:1`, { x: px, y: midY + 2 * GRID });
           fallbackPowerIdx++;
         } else {
           const fallbackIdx = passiveLayout.length;
@@ -589,7 +631,39 @@ export function SchematicView() {
     );
   }
 
-  const svgW = 70 * GRID;
+  // Joined terminal tracking
+  const joinedPinsSet = new Set<string>();
+  const joinedWiresList: Array<{ from: { x: number; y: number }; to: { x: number; y: number }; color: string; label: string }> = [];
+  const SIGNAL_COLORS_MAP: Record<string, string> = {
+    'SAW': '#ff8844', 'PULSE': '#cc44cc', 'TRI': '#44cc44',
+    '1V/OCT': '#44aadd', 'CV': '#44aadd', 'PW': '#ddaa44',
+    'SYNC': '#dd4444', 'SCALE': '#aa88cc', 'TRIM': '#aa88cc',
+  };
+  const joinedPins = joinedPinsSet;
+  const joinedWires = joinedWiresList;
+
+  // Routing column system — layers allocated outward from IC edges
+  // Each side (left/right) gets columns for: signal joins, then I/O terminals, then V+, then GND
+  const COL_SPACING_RT = GRID;
+  const icLeftX = layout.icPos.length > 0 ? Math.min(...layout.icPos.map(p => p.x)) - GRID : 10 * GRID;
+  const icRightX = layout.icPos.length > 0 ? Math.max(...layout.icPos.map(p => p.x + IC_W)) + GRID : 20 * GRID;
+  // Passive edges (furthest passive from IC)
+  const passiveLeftX = layout.passiveLayout.reduce((min, p) => Math.min(min, p.x1, p.x2), icLeftX) - GRID;
+  const passiveRightX = layout.passiveLayout.reduce((max, p) => Math.max(max, p.x1, p.x2), icRightX) + GRID;
+
+  // Left side columns (going further left):
+  const LEFT_SIGNAL_COL = (i: number) => passiveLeftX - 2 * GRID - i * COL_SPACING_RT;
+  const LEFT_IO_COL = passiveLeftX - GRID;
+  const LEFT_VCC_COL = passiveLeftX - 6 * GRID;
+  const LEFT_GND_COL = passiveLeftX - 3 * GRID;
+
+  // Right side columns (going further right):
+  const RIGHT_SIGNAL_COL = (i: number) => passiveRightX + 2 * GRID + i * COL_SPACING_RT;
+  const RIGHT_IO_COL = passiveRightX + GRID;
+  const RIGHT_VCC_COL = passiveRightX + 3 * GRID;
+  const RIGHT_GND_COL = passiveRightX + 6 * GRID;
+
+  const svgW = 80 * GRID;
   const svgH = Math.max(layout.totalH, 30 * GRID);
 
   return (
@@ -686,25 +760,110 @@ export function SchematicView() {
           />
         ))}
 
+        {/* Find matching terminal pairs to join with wires */}
+        {(() => {
+          // Collect all output and input terminals with positions
+          const outputs: Array<{ key: string; label: string; pos: { x: number; y: number } }> = [];
+          const inputs: Array<{ key: string; label: string; pos: { x: number; y: number } }> = [];
+
+          for (const [key, term] of terminals) {
+            const pos = layout.pinXY.get(key);
+            if (!pos) continue;
+            if (term.type === 'output') outputs.push({ key, label: term.label, pos });
+            if (term.type === 'input') inputs.push({ key, label: term.label, pos });
+          }
+
+          // Match pairs by signal name
+          const SIGNAL_PAIRS: Record<string, string[]> = {
+            'SAW': ['SAW IN', 'SAW OUT'],
+            'PULSE': ['PULSE IN', 'PULSE OUT'],
+            'TRI': ['TRI IN', 'TRI OUT'],
+          };
+
+          // Also match direct name matches
+          for (const out of outputs) {
+            for (const inp of inputs) {
+              // Direct match: output "SAW" matches input "SAW IN"
+              const outBase = out.label.replace(' OUT', '').replace('OUT', '');
+              const inBase = inp.label.replace(' IN', '').replace('IN', '');
+              if (outBase === inBase || out.label === inp.label) {
+                joinedPinsSet.add(out.key);
+                joinedPinsSet.add(inp.key);
+
+                const color = SIGNAL_COLORS_MAP[outBase] ?? SIGNAL_COLORS_MAP[out.label] ?? '#888';
+                joinedWiresList.push({
+                  from: out.pos,
+                  to: inp.pos,
+                  color,
+                  label: outBase || out.label,
+                });
+              }
+            }
+          }
+
+          return null; // rendering happens below
+        })()}
+
         {/* Passive symbols inline */}
         {layout.passiveLayout.map(({ comp, x1, y1, x2, y2 }) => {
           const selected = selectedItemId === comp.id;
           const value = formatValue(comp);
 
-          // Get terminal info for both pins
+          // Get terminal info and positions for both pins
           const term0 = terminals.get(`${comp.id}:0`);
           const term1 = terminals.get(`${comp.id}:1`);
+          const pos0 = layout.pinXY.get(`${comp.id}:0`);
+          const pos1 = layout.pinXY.get(`${comp.id}:1`);
+
+          // Determine terminal side: pin further from IC center is the "outer" side
+          const icCx = layout.icPos.length > 0 ? layout.icPos[0].x + IC_W / 2 : 0;
+          function termSide(pos: { x: number; y: number } | undefined): 'left' | 'right' {
+            if (!pos) return 'left';
+            return pos.x < icCx ? 'left' : 'right';
+          }
 
           return (
             <g key={comp.id} onClick={() => selectItem(comp.id, 'component')} style={{ cursor: 'pointer' }}>
               {comp.type === 'resistor' && drawResistor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
               {comp.type === 'capacitor' && drawCapacitor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
-              {comp.type === 'diode' && drawDiode(x1, y1, x2, y2, comp.label ?? '', selected)}
+              {comp.type === 'diode' && (() => {
+                const anodePos = layout.pinXY.get(`${comp.id}:0`); // pin 0 = anode
+                return drawDiode(x1, y1, x2, y2, comp.label ?? '', selected, anodePos?.x);
+              })()}
               {comp.type === 'potentiometer' && drawResistor(x1, y1, x2, y2, comp.label ?? '', value, selected)}
 
-              {/* Terminal symbols at dangling ends */}
-              {term0 && <TerminalSymbol x={x1} y={y1} terminal={term0} side="left" />}
-              {term1 && <TerminalSymbol x={x2} y={y2} terminal={term1} side="right" />}
+              {/* Terminal symbols at the actual pin positions — skip if joined */}
+              {term0 && pos0 && !joinedPins.has(`${comp.id}:0`) && <TerminalSymbol x={pos0.x} y={pos0.y} terminal={term0} side={termSide(pos0)} vccCol={termSide(pos0) === 'right' ? RIGHT_VCC_COL : LEFT_VCC_COL} gndCol={termSide(pos0) === 'right' ? RIGHT_GND_COL : LEFT_GND_COL} />}
+              {term1 && pos1 && !joinedPins.has(`${comp.id}:1`) && <TerminalSymbol x={pos1.x} y={pos1.y} terminal={term1} side={termSide(pos1)} vccCol={termSide(pos1) === 'right' ? RIGHT_VCC_COL : LEFT_VCC_COL} gndCol={termSide(pos1) === 'right' ? RIGHT_GND_COL : LEFT_GND_COL} />}
+            </g>
+          );
+        })}
+
+        {/* Joined terminal connections — routed on dedicated signal columns OUTSIDE everything */}
+        {joinedWires.map(({ from, to, color, label }, i) => {
+          const icCx = layout.icPos.length > 0 ? layout.icPos[0].x + IC_W / 2 : svgW / 2;
+          const bothLeft = from.x < icCx && to.x < icCx;
+
+          // Use dedicated signal columns — always outside all passives and terminals
+          const routeX = bothLeft
+            ? LEFT_SIGNAL_COL(i)
+            : RIGHT_SIGNAL_COL(i);
+
+          return (
+            <g key={`join-${i}`}>
+              <path
+                d={`M${from.x},${from.y} L${routeX},${from.y} L${routeX},${to.y} L${to.x},${to.y}`}
+                fill="none" stroke={color} strokeWidth={2} strokeDasharray="6 3"
+              />
+              <text
+                x={routeX - 4} y={(from.y + to.y) / 2 + 4}
+                fill={color} fontSize={9} fontFamily="monospace" fontWeight="bold"
+                textAnchor="end"
+              >
+                {label}
+              </text>
+              <Junction x={from.x} y={from.y} />
+              <Junction x={to.x} y={to.y} />
             </g>
           );
         })}
