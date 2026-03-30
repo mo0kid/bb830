@@ -44,12 +44,12 @@ const that2180: ICModel = {
   type: 'THAT2180',
   name: 'THAT 2180 VCA',
   pinCount: 8,
-  stateSize: 1,
+  stateSize: 2,
   supportedFidelity: [Fidelity.Block, Fidelity.Behavioral],
 
   createState(): ModelState {
     return {
-      state: new Float64Array(1),
+      state: new Float64Array(2),
       outputs: new Float64Array(8),
     };
   },
@@ -81,20 +81,25 @@ const that2180: ICModel = {
     if (fidelity === Fidelity.Block) {
       out[PIN_SIG_OUT] = sigIn * clampedGain;
     } else {
-      // Behavioral: THAT 2180 — cleaner Blackmer cell
-      //
-      // 1. Faster gain control bandwidth (~500kHz vs 200kHz)
-      const gainSmooth = 1.0 - Math.exp(-2 * Math.PI * 500000 * dt);
+      // Behavioral: THAT 2180 — configurable Blackmer cell
+      // bandwidth and feedthrough tuneable to match dbx 2150 character
+      const bw = params['bandwidth'] ?? 500000;
+      const gainSmooth = 1.0 - Math.exp(-2 * Math.PI * bw * dt);
       s[0] += gainSmooth * (clampedGain - s[0]);
 
-      // 2. Much lower distortion — nearly ideal gain cell
-      //    Only the subtlest hint of 2nd harmonic at extreme levels
       const sig = sigIn * s[0];
-      const dist = params['distortion'] ?? 0.0005; // ~6x cleaner than dbx 2150
+      const dist = params['distortion'] ?? 0.0005;
       const colored = sig + dist * sig * Math.abs(sig);
 
-      // 3. Negligible control feedthrough (improved design)
-      out[PIN_SIG_OUT] = colored;
+      // Control feedthrough (tuneable — 0 = clean THAT, 0.001 = dbx 2150 level)
+      const ft = params['feedthrough'] ?? 0;
+      if (ft > 0) {
+        const ftCoeff = 1.0 - Math.exp(-2 * Math.PI * 50000 * dt);
+        s[1] += ftCoeff * (ec * ft - s[1]);
+        out[PIN_SIG_OUT] = colored + s[1];
+      } else {
+        out[PIN_SIG_OUT] = colored;
+      }
     }
   },
 
