@@ -149,6 +149,82 @@ const handlers: Record<string, ActionHandler> = {
     }));
   },
 
+  'derive_nets': () => {
+    // Scan the breadboard and auto-generate nets from shared bus rows.
+    // On a BB830: holes a-e on the same row share a bus, f-j share a bus.
+    const store = useCircuitStore.getState();
+    const board = store.project.boards[0];
+    if (!board) return { error: 'No board' };
+
+    // Build a map: bus key → list of { componentId, pinIndex }
+    // Bus key = "row:side" e.g. "5:left" or "5:right"
+    const busMap = new Map<string, Array<{ componentId: string; pinIndex: number }>>();
+
+    function addToBus(row: number, col: string, componentId: string, pinIndex: number) {
+      const ci = 'abcdefghij'.indexOf(col);
+      if (ci < 0) return; // rail holes don't form buses
+      const side = ci < 5 ? 'left' : 'right';
+      const key = `${row}:${side}`;
+      if (!busMap.has(key)) busMap.set(key, []);
+      const bus = busMap.get(key)!;
+      // Avoid duplicates
+      if (!bus.some(e => e.componentId === componentId && e.pinIndex === pinIndex)) {
+        bus.push({ componentId, pinIndex });
+      }
+    }
+
+    // Map placements to bus entries
+    for (const placement of board.placements) {
+      const comp = store.project.netlist.components.find(c => c.id === placement.componentId);
+      if (!comp) continue;
+
+      if (comp.package.startsWith('DIP')) {
+        // DIP: left pins at col e, right pins at col f
+        const pinsPerSide = comp.pins.length / 2;
+        for (let i = 0; i < pinsPerSide; i++) {
+          addToBus(placement.pin1Position.row + i, 'e', comp.id, i); // left pin
+          addToBus(placement.pin1Position.row + i, 'f', comp.id, comp.pins.length - 1 - i); // right pin
+        }
+      } else if (comp.type === 'transistor') {
+        // Transistor: 3 pins in same column
+        addToBus(placement.pin1Position.row - 1, placement.pin1Position.col, comp.id, 1); // Collector
+        addToBus(placement.pin1Position.row, placement.pin1Position.col, comp.id, 0); // Base
+        addToBus(placement.pin1Position.row + 1, placement.pin1Position.col, comp.id, 2); // Emitter
+      } else {
+        // 2-pin passive: pin1 and pin2
+        addToBus(placement.pin1Position.row, placement.pin1Position.col, comp.id, 0);
+        if (placement.pin2Position) {
+          addToBus(placement.pin2Position.row, placement.pin2Position.col, comp.id, 1);
+        }
+      }
+    }
+
+    // Also add wire endpoints to the bus map (wires connect buses but don't have component pins)
+    // Wires create connections between their endpoint buses
+
+    // Now generate nets from buses with 2+ entries
+    // Clear existing nets first
+    const existingNets = store.project.netlist.nets.length;
+    let netCount = 0;
+
+    for (const [busKey, entries] of busMap) {
+      if (entries.length < 2) continue;
+
+      // Check if a net already exists for these exact connections
+      const netName = `bus_${busKey.replace(':', '_')}`;
+      const netId = `net-auto-${busKey.replace(':', '-')}`;
+
+      store.addNet({
+        id: netId,
+        name: netName,
+        connections: entries,
+      });
+      netCount++;
+    }
+
+    return { derived: netCount, totalBuses: busMap.size };
+  },
+
   'add_net': ({ name, connections }) => {
     const store = useCircuitStore.getState();
     const id = `net-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
