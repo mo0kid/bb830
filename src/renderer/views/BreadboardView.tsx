@@ -639,34 +639,36 @@ export function BreadboardView({ board }: Props) {
       const bodyEndY = my + Math.sin(angle) * bodyLen / 2;
 
       if (isResistor) {
-        // Fritzing-style resistor: rounded capsule body with color bands
-        // Draw capsule shape: rounded ends with straight sides
-        const capR = bodyH / 2;
+        // Resistor: rounded rectangle body with color bands
+        // Use a Container with rotation for proper capsule orientation
+        const resBody = new Container();
+        const resGfx = new Graphics();
+        resGfx.roundRect(-bodyLen / 2, -bodyH / 2, bodyLen, bodyH, bodyH / 2);
+        resGfx.fill(COLORS.passive.resistor);
+        resGfx.stroke({ width: 0.8, color: 0x8a6b44 });
+        resBody.addChild(resGfx);
+        resBody.x = mx;
+        resBody.y = my;
+        resBody.rotation = angle;
+        container.addChild(resBody);
 
-        // Left cap (semicircle)
-        passive.arc(bodyStartX, bodyStartY, capR, angle + Math.PI / 2, angle - Math.PI / 2);
-        // Top edge
-        passive.lineTo(bodyEndX + perpX, bodyEndY + perpY);
-        // Right cap (semicircle)
-        passive.arc(bodyEndX, bodyEndY, capR, angle - Math.PI / 2, angle + Math.PI / 2);
-        // Bottom edge back to start
-        passive.lineTo(bodyStartX - perpX, bodyStartY - perpY);
-        passive.closePath();
-        passive.fill(COLORS.passive.resistor);
-        passive.stroke({ width: 0.8, color: 0x8a6b44 });
-
-        // 4-band color code
+        // 4-band color code — drawn inside rotated container
         const bands = resistorBands(component.parameters['resistance'] ?? 10000);
         const bandPositions = [0.15, 0.30, 0.45, 0.80];
         const bandWidths = [3, 3, 3, 2.5];
+        const bandGfx = new Graphics();
         for (let b = 0; b < bands.length; b++) {
-          const t = bandPositions[b];
-          const bpx = bodyStartX + Math.cos(angle) * bodyLen * t;
-          const bpy = bodyStartY + Math.sin(angle) * bodyLen * t;
-          passive.moveTo(bpx + perpX * 0.92, bpy + perpY * 0.92);
-          passive.lineTo(bpx - perpX * 0.92, bpy - perpY * 0.92);
-          passive.stroke({ width: bandWidths[b], color: bands[b] });
+          const bx = -bodyLen / 2 + bodyLen * bandPositions[b];
+          bandGfx.moveTo(bx, -bodyH / 2 * 0.9);
+          bandGfx.lineTo(bx, bodyH / 2 * 0.9);
+          bandGfx.stroke({ width: bandWidths[b], color: bands[b] });
         }
+        resBody.addChild(bandGfx);
+
+        // Make resistor body clickable
+        resGfx.eventMode = 'static';
+        resGfx.cursor = 'pointer';
+        resGfx.on('pointerdown', () => useUIStore.getState().selectItem(placement.componentId, 'component'));
       } else if (isDiode) {
         // Fritzing-style diode: glass/dark body with silver cathode band
         const isLED = component.parameters['vForward'] >= 1.5;
@@ -797,11 +799,43 @@ export function BreadboardView({ board }: Props) {
     const x1 = holeX(from.col), y1 = holeY(from.row);
     const x2 = holeX(to.col), y2 = holeY(to.row);
     const isSelected = uiStore.selectedItemId === wire.id;
+    const wireColor = isSelected ? COLORS.selected : (COLORS.wireColors[wire.color] ?? 0x3366ff);
+    const wireWidth = isSelected ? 4 : 3;
+
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
     const wireGfx = new Graphics();
-    wireGfx.moveTo(x1, y1); wireGfx.lineTo(x2, y2);
-    wireGfx.stroke({ width: isSelected ? 4 : 3, color: isSelected ? COLORS.selected : (COLORS.wireColors[wire.color] ?? 0x3366ff) });
+
+    // Short wires (< 5 rows or same-row horizontal): straight line
+    // Long wires: curved outward to avoid covering components
+    const rowSpan = Math.abs(from.row - to.row);
+
+    if (rowSpan <= 3 && Math.abs(dx) < HOLE_SPACING * 6) {
+      // Short wire — straight
+      wireGfx.moveTo(x1, y1);
+      wireGfx.lineTo(x2, y2);
+      wireGfx.stroke({ width: wireWidth, color: wireColor });
+    } else {
+      // Long wire — curve outward
+      // Determine which side to bow toward (away from board center)
+      const midX = (x1 + x2) / 2;
+      const boardCenterX = (LEFT_COLS_START + RIGHT_COLS_START + 4 * COL_SPACING) / 2;
+      const bowDirection = midX < boardCenterX ? -1 : 1;
+      const bowAmount = Math.min(dist * 0.15, 30); // proportional curve, max 30px
+
+      const cpx = (x1 + x2) / 2 + bowDirection * bowAmount;
+      const cpy = (y1 + y2) / 2;
+
+      wireGfx.moveTo(x1, y1);
+      wireGfx.quadraticCurveTo(cpx, cpy, x2, y2);
+      wireGfx.stroke({ width: wireWidth, color: wireColor });
+    }
+
+    // Solder blobs at endpoints
     wireGfx.circle(x1, y1, 3.5); wireGfx.fill(COLORS.wireColors[wire.color] ?? 0x3366ff);
     wireGfx.circle(x2, y2, 3.5); wireGfx.fill(COLORS.wireColors[wire.color] ?? 0x3366ff);
+
     wireGfx.eventMode = 'static'; wireGfx.cursor = 'pointer';
     wireGfx.on('pointerdown', () => useUIStore.getState().selectItem(wire.id, 'wire'));
     container.addChild(wireGfx);
@@ -832,6 +866,10 @@ export function BreadboardView({ board }: Props) {
           // Ignore if clicking the same hole or different board
           if (ui.passivePin1.row === row && ui.passivePin1.col === col) return;
           if (ui.passivePin1.boardId !== board.id) { ui.setPassivePin1({ row, col, boardId: board.id }); return; }
+          // Enforce minimum span — at least 2 rows or diagonal
+          const rowSpan = Math.abs(row - ui.passivePin1.row);
+          const colSpan = Math.abs('abcdefghij'.indexOf(col) - 'abcdefghij'.indexOf(ui.passivePin1.col));
+          if (rowSpan < 2 && colSpan < 2) return; // too short, ignore click
           const p1Col = ui.passivePin1.col as BoardCol;
           const p1Row = ui.passivePin1.row;
           const componentId = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

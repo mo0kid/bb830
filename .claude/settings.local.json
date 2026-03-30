@@ -20,7 +20,8 @@
       "mcp__bb830__bb830_auto_ic",
       "mcp__bb830__bb830_auto_passive",
       "mcp__bb830__bb830_auto_wire",
-      "mcp__bb830__bb830_remove"
+      "mcp__bb830__bb830_remove",
+      "mcp__bb830__bb830_get_board_state"
     ]
   },
   "enableAllProjectMcpServers": true,

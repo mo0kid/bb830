@@ -39,11 +39,12 @@ export class LayoutEngine {
   /** Register an IC placement */
   registerIC(componentId: string, label: string, type: string, startRow: number, pinCount: number) {
     this.ics.push({ componentId, label, type, startRow, pinCount });
-    // Mark IC rows as occupied in columns d,e,f,g
+    // Mark only the actual pin holes (e and f) as occupied.
+    // Columns d and g are on the same bus but physically free — available for wires.
     const pinsPerSide = pinCount / 2;
     for (let i = 0; i < pinsPerSide; i++) {
       const row = startRow + i;
-      for (const col of ['d', 'e', 'f', 'g']) {
+      for (const col of ['e', 'f']) {
         this.occupied.push({ row, col, componentId });
       }
     }

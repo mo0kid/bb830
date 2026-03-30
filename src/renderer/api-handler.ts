@@ -31,6 +31,11 @@ const handlers: Record<string, ActionHandler> = {
 
     if (!def.package.startsWith('DIP') && def.type !== 'transistor') {
       if (row2 == null || col2 == null) return { error: `${type} requires row2 and col2` };
+      // Enforce minimum span — components must span at least 3 rows or be diagonal across 2+ rows
+      const rowSpan = Math.abs(row2 - row);
+      const colSpan = Math.abs('abcdefghij'.indexOf(col2) - 'abcdefghij'.indexOf(col));
+      if (rowSpan < 2 && colSpan < 2) return { error: `Passive must span at least 2 rows or be diagonal. Got ${col}${row}→${col2}${row2}` };
+      if (rowSpan === 0 && col === col2) return { error: `Same hole — cannot place component` };
       placement.pin2Position = { row: row2, col: col2 };
     }
     if (def.type === 'transistor') {
