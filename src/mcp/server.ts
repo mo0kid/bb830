@@ -62,6 +62,9 @@ server.tool('bb830_wire', 'Add a wire between two holes (live in app)', {
   color: z.string().optional().describe('Wire color: red, black, blue, green, yellow, orange, white, purple'),
 }, async ({ boardId, fromRow, fromCol, toRow, toCol, color }) => {
   const result = await sendCommand('wire', { boardId, fromRow, fromCol, toRow, toCol, color });
+  // Register wire endpoints with layout engine
+  if (!fromCol.includes('L') && !fromCol.includes('R')) layout.markOccupied(fromRow, fromCol, 'wire');
+  if (!toCol.includes('L') && !toCol.includes('R')) layout.markOccupied(toRow, toCol, 'wire');
   return { content: [{ type: 'text' as const, text: resultText(result) }] };
 });
 
@@ -181,6 +184,13 @@ server.tool('bb830_auto_ic', 'Smart-place a DIP IC with automatic positioning an
 
   const wires: string[] = [];
 
+  // Helper: find a free column on a row for a power wire
+  function freeCol(row: number, side: 'left' | 'right'): string {
+    const options = side === 'left' ? ['d', 'c', 'b', 'a'] : ['g', 'h', 'i', 'j'];
+    for (const c of options) { if (layout.isFree(row, c)) return c; }
+    return options[0]; // fallback
+  }
+
   // Auto-wire power pins
   const pins = IC_PINS[type];
   if (pins && wirePower !== false) {
@@ -190,13 +200,15 @@ server.tool('bb830_auto_ic', 'Smart-place a DIP IC with automatic positioning an
 
       if (pin.name === 'V+') {
         const railCol = pinInfo.side === 'left' ? '+L' : '+R';
-        const wireCol = pinInfo.side === 'left' ? 'd' : 'g';
+        const wireCol = freeCol(pinInfo.row, pinInfo.side);
         await sendCommand('wire', { fromRow: pinInfo.row, fromCol: wireCol, toRow: pinInfo.row, toCol: railCol, color: 'red' });
+        layout.markOccupied(pinInfo.row, wireCol, 'wire');
         wires.push(`V+ → ${railCol} at row ${pinInfo.row}`);
       } else if (pin.name === 'V-') {
         const railCol = pinInfo.side === 'left' ? '-L' : '-R';
-        const wireCol = pinInfo.side === 'left' ? 'd' : 'g';
+        const wireCol = freeCol(pinInfo.row, pinInfo.side);
         await sendCommand('wire', { fromRow: pinInfo.row, fromCol: wireCol, toRow: pinInfo.row, toCol: railCol, color: 'blue' });
+        layout.markOccupied(pinInfo.row, wireCol, 'wire');
         wires.push(`V- → ${railCol} at row ${pinInfo.row}`);
       }
     }
@@ -208,8 +220,9 @@ server.tool('bb830_auto_ic', 'Smart-place a DIP IC with automatic positioning an
       const pinInfo = layout.getICPinRow(label, pin.index);
       if (!pinInfo) continue;
       const railCol = pinInfo.side === 'left' ? '-L' : '-R';
-      const wireCol = pinInfo.side === 'left' ? 'd' : 'g';
+      const wireCol = freeCol(pinInfo.row, pinInfo.side);
       await sendCommand('wire', { fromRow: pinInfo.row, fromCol: wireCol, toRow: pinInfo.row, toCol: railCol, color: 'black' });
+      layout.markOccupied(pinInfo.row, wireCol, 'wire');
       wires.push(`GND → ${railCol} at row ${pinInfo.row}`);
     }
   }
@@ -263,6 +276,7 @@ server.tool('bb830_auto_passive', 'Smart-place a passive component connected to 
 
     const wire = layout.wireToRail(railEnd.row, railEnd.col, otherEnd);
     await sendCommand('wire', wire);
+    layout.markOccupied(railEnd.row, railEnd.col, 'wire');
     wires.push(`${otherEnd.toUpperCase()} rail at row ${railEnd.row}`);
   }
 
@@ -294,6 +308,7 @@ server.tool('bb830_auto_wire', 'Smart-wire between an IC pin and a rail or anoth
     const wire = layout.wireToRail(srcInfo.row, fromCol, toRail as 'vcc' | 'gnd');
     wire.color = color ?? wire.color;
     await sendCommand('wire', wire);
+    layout.markOccupied(srcInfo.row, fromCol, 'wire');
     return { content: [{ type: 'text' as const, text: `Wired ${fromIC}.${fromPin} → ${toRail.toUpperCase()} rail at row ${srcInfo.row}` }] };
   }
 
