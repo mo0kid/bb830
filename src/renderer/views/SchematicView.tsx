@@ -108,50 +108,65 @@ function deriveFromBoard(board: Board, components: Component[]): DerivedData {
       pinPositions.push({ pinIndex: 1, row: placement.pin2Position.row, col: placement.pin2Position.col });
     }
 
+    // Determine which pin connects to an IC (the "inner" pin)
+    // and which is the "outer" pin that needs a terminal symbol
+    let innerPinIdx = -1;
+    let icPinName = '';
+
+    for (const { pinIndex, row, col } of pinPositions) {
+      const busKey = getBusKey(row, col);
+      if (busKey && busMap.has(busKey)) {
+        const bus = busMap.get(busKey)!;
+        const icEntry = bus.find(e => {
+          const c = components.find(cc => cc.id === e.componentId);
+          return c && c.package.startsWith('DIP') && e.componentId !== comp.id;
+        });
+        if (icEntry) {
+          innerPinIdx = pinIndex;
+          const ic = components.find(c => c.id === icEntry.componentId);
+          icPinName = ic?.pins[icEntry.pinIndex]?.name ?? '';
+          break;
+        }
+      }
+    }
+
+    // Now set terminals for each pin
     for (const { pinIndex, row, col } of pinPositions) {
       const key = `${comp.id}:${pinIndex}`;
       const busKey = getBusKey(row, col);
 
-      // Check if this bus connects to a rail
+      if (pinIndex === innerPinIdx) {
+        // This pin connects to IC — no terminal needed (wire handles it)
+        continue;
+      }
+
+      // Check if this pin connects to a power rail
       if (busKey && railConnections.has(busKey)) {
         terminals.set(key, { type: railConnections.get(busKey)! });
         continue;
       }
 
-      // Check if this bus connects to an IC pin (already in a net)
+      // Check if this pin connects to another passive (shared bus)
       if (busKey && busMap.has(busKey)) {
         const bus = busMap.get(busKey)!;
-        const hasIC = bus.some(e => {
-          const c = components.find(cc => cc.id === e.componentId);
-          return c && c.package.startsWith('DIP');
-        });
-        if (hasIC) continue; // Connected to IC — net handles it
-      }
-
-      // Check if this bus connects to another passive
-      if (busKey && busMap.has(busKey) && busMap.get(busKey)!.length >= 2) {
-        continue; // Connected to another component
-      }
-
-      // Dangling — determine label from context
-      const isOutput = comp.type === 'resistor' && (comp.label?.includes('4') || comp.label?.includes('5') || comp.label?.includes('6') || comp.label?.includes('7'));
-      if (isOutput) {
-        // Output resistors — their free ends are signal outputs
-        const icNet = nets.find(n => n.connections.some(c => c.componentId === comp.id));
-        const icConn = icNet?.connections.find(c => {
-          const cc = components.find(ccc => ccc.id === c.componentId);
-          return cc?.package.startsWith('DIP');
-        });
-        if (icConn) {
-          const ic = components.find(c => c.id === icConn.componentId);
-          const pinName = ic?.pins[icConn.pinIndex]?.name ?? 'OUT';
-          terminals.set(key, { type: 'output', label: pinName });
+        const hasOtherComponent = bus.some(e => e.componentId !== comp.id);
+        if (hasOtherComponent) {
+          // Connected to another component — will be drawn by that net
           continue;
         }
       }
 
-      // Default: unconnected input
-      terminals.set(key, { type: 'input', label: comp.label ?? comp.type });
+      // This is the outer pin — determine what it represents
+      // If the IC pin is an output type, this passive's outer end is a signal output
+      const icPinType = icPinName.toUpperCase();
+      if (icPinType.includes('OUT') || icPinType === 'RAMP OUT' || icPinType === 'PULSE OUT' || icPinType === 'TRI OUT') {
+        terminals.set(key, { type: 'output', label: icPinName });
+      } else if (icPinType.includes('IN') || icPinType.includes('CV') || icPinType.includes('SYNC')) {
+        terminals.set(key, { type: 'input', label: icPinName || comp.label || '' });
+      } else {
+        // Generic unconnected
+        terminals.set(key, { type: 'input', label: comp.label ?? comp.type });
+      }
     }
   }
 
@@ -460,6 +475,19 @@ export function SchematicView() {
       }
     }
 
+    // Helper to get bus key for a passive's pin from its placement
+    function getBusKeyForComp(comp: Component, pinIdx: number): string | null {
+      const placement = board?.placements.find(p => p.componentId === comp.id);
+      if (!placement) return null;
+      const pos = pinIdx === 0 ? placement.pin1Position : placement.pin2Position;
+      if (!pos) return null;
+      const ci = 'abcdefghij'.indexOf(pos.col);
+      if (ci < 0) return null;
+      return `${pos.row}:${ci < 5 ? 'left' : 'right'}`;
+    }
+
+    let fallbackPowerIdx = 0;
+
     // Position passives inline with their connections
     // Group passives by which IC pin they connect to
     const passiveLayout: Array<{
@@ -515,16 +543,34 @@ export function SchematicView() {
         if (placed) break;
       }
 
-      // Fallback: place below ICs, spread out vertically
+      // Fallback: power components go between IC blocks, others spread below
       if (!placed) {
-        const fallbackIdx = passiveLayout.length;
-        const col = fallbackIdx % 3;
-        const row = Math.floor(fallbackIdx / 3);
-        const fx = 4 * GRID + col * 8 * GRID;
-        const fy = icY + 2 * GRID + row * 2.5 * GRID;
-        passiveLayout.push({ comp: p, x1: fx, y1: fy, x2: fx + 3 * GRID, y2: fy, orientation: 'h' });
-        pinXY.set(`${p.id}:0`, { x: fx, y: fy });
-        pinXY.set(`${p.id}:1`, { x: fx + 3 * GRID, y: fy });
+        // Check if this is a power component (both pins connect to rails)
+        const pin0Bus = getBusKeyForComp(p, 0);
+        const pin1Bus = getBusKeyForComp(p, 1);
+        const pin0Rail = pin0Bus ? derived.terminals.get(`${p.id}:0`) : null;
+        const pin1Rail = pin1Bus ? derived.terminals.get(`${p.id}:1`) : null;
+        const isPowerCap = p.type === 'capacitor' && (pin0Rail?.type === 'vcc' || pin0Rail?.type === 'gnd' || pin1Rail?.type === 'vcc' || pin1Rail?.type === 'gnd');
+
+        if (isPowerCap && icPos.length > 0) {
+          // Place vertically between V+ and GND, to the right of the last IC
+          const lastIC = icPos[icPos.length - 1];
+          const px = lastIC.x + IC_W + 8 * GRID + fallbackPowerIdx * 4 * GRID;
+          const py = lastIC.y + lastIC.h / 2;
+          passiveLayout.push({ comp: p, x1: px, y1: py - 1.5 * GRID, x2: px, y2: py + 1.5 * GRID, orientation: 'v' });
+          pinXY.set(`${p.id}:0`, { x: px, y: py - 1.5 * GRID });
+          pinXY.set(`${p.id}:1`, { x: px, y: py + 1.5 * GRID });
+          fallbackPowerIdx++;
+        } else {
+          const fallbackIdx = passiveLayout.length;
+          const col = fallbackIdx % 3;
+          const row = Math.floor(fallbackIdx / 3);
+          const fx = 4 * GRID + col * 8 * GRID;
+          const fy = icY + 2 * GRID + row * 2.5 * GRID;
+          passiveLayout.push({ comp: p, x1: fx, y1: fy, x2: fx + 3 * GRID, y2: fy, orientation: 'h' });
+          pinXY.set(`${p.id}:0`, { x: fx, y: fy });
+          pinXY.set(`${p.id}:1`, { x: fx + 3 * GRID, y: fy });
+        }
       }
     }
 
@@ -569,197 +615,66 @@ export function SchematicView() {
         <line x1={GRID} y1={svgH - GRID} x2={svgW - GRID} y2={svgH - GRID} stroke="#2244bb" strokeWidth={2} opacity={0.4} />
         <text x={GRID + 4} y={svgH - GRID - 4} fill="#2244bb" fontSize={9} fontFamily="monospace">GND</text>
 
-        {/* Net connections — channel-based orthogonal routing */}
+        {/* Net connections — simple direct wires */}
         {(() => {
-          // IC center and edges for routing decisions
+          // For each net: draw a single horizontal wire connecting all positions at the same Y.
+          // Only draw vertical wires when a net connects pins at different heights
+          // and those pins are adjacent (same X column).
+          // No complex routing — keep it simple and clean.
+
           const icCenterX = layout.icPos.length > 0 ? layout.icPos[0].x + IC_W / 2 : svgW / 2;
-          const icLeftEdge = layout.icPos.length > 0 ? Math.min(...layout.icPos.map(p => p.x)) : svgW / 2;
-          const icRightEdge = layout.icPos.length > 0 ? Math.max(...layout.icPos.map(p => p.x + IC_W)) : svgW / 2;
+          const allJunctions: Array<{ x: number; y: number; color: string }> = [];
 
-          // Channel allocation: each side gets incrementally spaced vertical channels
-          const CHANNEL_SPACING = 8;
-          let leftChannelCount = 0;
-          let rightChannelCount = 0;
-
-          // Pre-process: figure out which nets need vertical routing and on which side
-          type NetRoute = {
-            ni: number;
-            color: string;
-            positions: Array<{ x: number; y: number }>;
-            needsVertical: boolean;
-            side: 'left' | 'right' | 'cross';
-            channel: number; // allocated channel index
-          };
-
-          const netRoutes: NetRoute[] = [];
-
-          for (let ni = 0; ni < nets.length; ni++) {
-            const net = nets[ni];
-            if (net.connections.length < 2) continue;
+          const rendered = nets.map((net, ni) => {
+            if (net.connections.length < 2) return null;
             const color = NET_COLORS[ni % NET_COLORS.length];
+            const wires: React.JSX.Element[] = [];
 
             const positions = net.connections
               .map(c => layout.pinXY.get(`${c.componentId}:${c.pinIndex}`))
               .filter(Boolean) as Array<{ x: number; y: number }>;
 
-            if (positions.length < 2) continue;
+            if (positions.length < 2) return null;
 
-            // Determine if pins are at different heights (need vertical routing)
-            const ys = positions.map(p => p.y);
-            const needsVertical = Math.max(...ys) - Math.min(...ys) > 2;
-
-            // Determine side
-            const allLeft = positions.every(p => p.x < icCenterX);
-            const allRight = positions.every(p => p.x >= icCenterX);
-            const side = allLeft ? 'left' : allRight ? 'right' : 'cross';
-
-            // Allocate channel
-            let channel = 0;
-            if (needsVertical) {
-              if (side === 'left') {
-                channel = leftChannelCount++;
-              } else if (side === 'right') {
-                channel = rightChannelCount++;
-              } else {
-                // Cross-side: use right channels
-                channel = rightChannelCount++;
-              }
+            // Group by Y (rounded to 4px)
+            const rows = new Map<number, Array<{ x: number; y: number }>>();
+            for (const p of positions) {
+              const ry = Math.round(p.y / 4) * 4;
+              if (!rows.has(ry)) rows.set(ry, []);
+              rows.get(ry)!.push(p);
             }
 
-            netRoutes.push({ ni, color, positions, needsVertical, side, channel });
-          }
-
-          // Passive component bounding boxes for avoidance
-          const passiveBounds = layout.passiveLayout.map(p => ({
-            left: Math.min(p.x1, p.x2) - 5,
-            right: Math.max(p.x1, p.x2) + 5,
-            top: Math.min(p.y1, p.y2) - 12,
-            bottom: Math.max(p.y1, p.y2) + 12,
-          }));
-
-          return netRoutes.map(({ ni, color, positions, needsVertical, side, channel }) => {
-            const wires: React.JSX.Element[] = [];
-
-            // Group positions by Y (same-row connections are horizontal wires)
-            const rowGroups = new Map<number, Array<{ x: number; y: number }>>();
-            for (const pos of positions) {
-              const roundedY = Math.round(pos.y / 4) * 4; // snap to ~4px grid
-              if (!rowGroups.has(roundedY)) rowGroups.set(roundedY, []);
-              rowGroups.get(roundedY)!.push(pos);
-            }
-
-            // 1) Draw horizontal wires within each row group
-            let wireIdx = 0;
-            const rowAnchors: Array<{ x: number; y: number }> = []; // one anchor per row for vertical routing
-            for (const [, group] of rowGroups) {
+            // Draw horizontal connections within each row
+            let wi = 0;
+            for (const [, group] of rows) {
+              if (group.length < 2) continue;
               group.sort((a, b) => a.x - b.x);
-              // Connect all positions in this row with a horizontal wire
-              if (group.length >= 2) {
-                const x1 = group[0].x;
-                const x2 = group[group.length - 1].x;
-                const y = group[0].y;
-                wires.push(<line key={`h${ni}-${wireIdx++}`} x1={x1} y1={y} x2={x2} y2={y} stroke={color} strokeWidth={1.5} />);
+              // One line from leftmost to rightmost
+              wires.push(
+                <line key={`h${ni}-${wi++}`}
+                  x1={group[0].x} y1={group[0].y}
+                  x2={group[group.length - 1].x} y2={group[group.length - 1].y}
+                  stroke={color} strokeWidth={1.5}
+                />
+              );
+              // Junction at each intermediate point
+              for (const p of group) {
+                allJunctions.push({ x: p.x, y: p.y, color });
               }
-              // Pick the IC-side position as anchor for vertical routing
-              const anchor = side === 'left'
-                ? group.reduce((best, p) => p.x > best.x ? p : best, group[0])
-                : group.reduce((best, p) => p.x < best.x ? p : best, group[0]);
-              rowAnchors.push(anchor);
             }
 
-            // 2) Draw vertical wires between row anchors
-            rowAnchors.sort((a, b) => a.y - b.y);
-            for (let i = 1; i < rowAnchors.length; i++) {
-              const a = rowAnchors[i - 1];
-              const b = rowAnchors[i];
-              const dx = b.x - a.x;
-              const dy = b.y - a.y;
-
-              let d: string;
-
-              if (Math.abs(dy) < 2) {
-                d = `M${a.x},${a.y} L${b.x},${b.y}`;
-              } else if (Math.abs(dx) < 2) {
-                d = `M${a.x},${a.y} L${b.x},${b.y}`;
-              } else if (Math.abs(dx) < GRID * 2) {
-                d = `M${a.x},${a.y} L${a.x},${b.y} L${b.x},${b.y}`;
-              } else if (side === 'left') {
-                // Both on left — route via dedicated left channel
-                // Channel X: progressively further left from the leftmost passive
-                const channelX = icLeftEdge - GRID * 2 - (3 * GRID) - channel * CHANNEL_SPACING;
-                d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
-              } else if (side === 'right') {
-                // Both on right — route via dedicated right channel
-                // But check if the vertical span crosses an IC body
-                const channelX = icRightEdge + GRID * 2 + (3 * GRID) + channel * CHANNEL_SPACING;
-                const minY = Math.min(a.y, b.y);
-                const maxY = Math.max(a.y, b.y);
-                const crossesIC = layout.icPos.some(ic => {
-                  return channelX < ic.x + IC_W + GRID * 3 && minY < ic.y + ic.h && maxY > ic.y;
-                });
-
-                if (crossesIC && layout.icPos.length >= 2) {
-                  // Route through gap between ICs instead
-                  const sortedObs = layout.icPos.map(p => ({ top: p.y, bottom: p.y + p.h })).sort((x, y) => x.top - y.top);
-                  let foundGap = false;
-                  for (let g = 0; g < sortedObs.length - 1; g++) {
-                    const gapTop = sortedObs[g].bottom;
-                    const gapBot = sortedObs[g + 1].top;
-                    if (gapBot - gapTop > GRID) {
-                      const gapY = gapTop + (gapBot - gapTop) / 2;
-                      // Route: down to gap, across to far right channel, down to target
-                      const farX = channelX;
-                      d = `M${a.x},${a.y} L${farX},${a.y} L${farX},${gapY} L${farX},${b.y} L${b.x},${b.y}`;
-                      foundGap = true;
-                      break;
-                    }
-                  }
-                  if (!foundGap) {
-                    d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
-                  }
-                } else {
-                  d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
-                }
-              } else {
-                // Cross-side — route between ICs if gap exists, else around right
-                const sortedObs = layout.icPos.map(p => ({ top: p.y, bottom: p.y + p.h })).sort((a, b) => a.top - b.top);
-                let routedThroughGap = false;
-
-                for (let g = 0; g < sortedObs.length - 1; g++) {
-                  const gapTop = sortedObs[g].bottom;
-                  const gapBot = sortedObs[g + 1].top;
-                  if (gapBot - gapTop > GRID * 2) {
-                    const gapY = gapTop + (gapBot - gapTop) / 2 + channel * CHANNEL_SPACING;
-                    const minY = Math.min(a.y, b.y);
-                    const maxY = Math.max(a.y, b.y);
-                    if (gapY > minY - GRID && gapY < maxY + GRID) {
-                      d = `M${a.x},${a.y} L${a.x},${gapY} L${b.x},${gapY} L${b.x},${b.y}`;
-                      routedThroughGap = true;
-                      break;
-                    }
-                  }
-                }
-
-                if (!routedThroughGap) {
-                  const channelX = icRightEdge + GRID * 2 + (3 * GRID) + channel * CHANNEL_SPACING;
-                  d = `M${a.x},${a.y} L${channelX},${a.y} L${channelX},${b.y} L${b.x},${b.y}`;
-                }
-
-                d = d!;
-              }
-
-              wires.push(<path key={`w${ni}-${i}`} d={d!} fill="none" stroke={color} strokeWidth={1.5} />);
-            }
-
-            return (
-              <g key={`net-${ni}`}>
-                {wires}
-                {positions.map((pos, i) => (
-                  <Junction key={`j${ni}-${i}`} x={pos.x} y={pos.y} />
-                ))}
-              </g>
-            );
+            return <g key={`net-${ni}`}>{wires}</g>;
           });
+
+          return (
+            <>
+              {rendered}
+              {/* Draw all junction dots on top */}
+              {allJunctions.map((j, i) => (
+                <Junction key={`jall-${i}`} x={j.x} y={j.y} />
+              ))}
+            </>
+          );
         })()}
 
         {/* IC symbols */}
