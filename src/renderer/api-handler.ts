@@ -5,6 +5,7 @@
  */
 
 import { useCircuitStore } from './stores/circuit-store';
+import { useSimStore } from './stores/sim-store';
 import { COMPONENT_LIBRARY } from './panels/ComponentLibrary';
 import type { BoardCol } from '../shared/board-types';
 
@@ -146,6 +147,42 @@ const handlers: Record<string, ActionHandler> = {
       type: c.type, name: c.name, category: c.category, package: c.package,
       pins: c.pins.map(p => `${p.index + 1}:${p.name}`),
     }));
+  },
+
+  'add_net': ({ name, connections }) => {
+    const store = useCircuitStore.getState();
+    const id = `net-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    store.addNet({ id, name, connections });
+    return { id, name, connections: connections.length };
+  },
+
+  'run_sim': ({ probeNetId, fidelity }) => {
+    const circuitStore = useCircuitStore.getState();
+    const simStore = useSimStore.getState();
+    if (fidelity != null) simStore.setFidelity(fidelity);
+    if (probeNetId) simStore.setProbeNet(probeNetId);
+    const { components } = circuitStore.project.netlist;
+    const nets = circuitStore.project.netlist.nets;
+    simStore.start(
+      components.map(c => ({ id: c.id, type: c.type, parameters: c.parameters })),
+      nets.map(n => ({ id: n.id, connections: n.connections })),
+    );
+    return { status: 'running', probeNetId: simStore.probeNetId, components: components.length, nets: nets.length };
+  },
+
+  'stop_sim': () => {
+    useSimStore.getState().stop();
+    return { status: 'stopped' };
+  },
+
+  'set_probe': ({ netId }) => {
+    useSimStore.getState().setProbeNet(netId);
+    return { ok: true, probeNetId: netId };
+  },
+
+  'get_nets': () => {
+    const { project } = useCircuitStore.getState();
+    return project.netlist.nets.map(n => ({ id: n.id, name: n.name, connections: n.connections }));
   },
 };
 

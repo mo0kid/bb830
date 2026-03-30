@@ -130,6 +130,35 @@ server.tool('bb830_list_components', 'List available component types', {}, async
   return { content: [{ type: 'text' as const, text: resultText(result) }] };
 });
 
+server.tool('bb830_add_net', 'Create a named net connecting component pins', {
+  name: z.string().describe('Net name, e.g. "SAW_OUT", "CV_IN"'),
+  connections: z.array(z.object({
+    componentId: z.string(),
+    pinIndex: z.number(),
+  })).describe('Array of { componentId, pinIndex } to connect'),
+}, async ({ name, connections }) => {
+  const result = await sendCommand('add_net', { name, connections });
+  return { content: [{ type: 'text' as const, text: resultText(result) }] };
+});
+
+server.tool('bb830_run_sim', 'Start the circuit simulation (live audio output)', {
+  probeNetId: z.string().optional().describe('Net ID to probe (hear/see waveform)'),
+  fidelity: z.number().optional().describe('1=Block, 2=Behavioral (default)'),
+}, async ({ probeNetId, fidelity }) => {
+  const result = await sendCommand('run_sim', { probeNetId, fidelity });
+  return { content: [{ type: 'text' as const, text: resultText(result) }] };
+});
+
+server.tool('bb830_stop_sim', 'Stop the simulation', {}, async () => {
+  const result = await sendCommand('stop_sim', {});
+  return { content: [{ type: 'text' as const, text: resultText(result) }] };
+});
+
+server.tool('bb830_get_nets', 'List all nets', {}, async () => {
+  const result = await sendCommand('get_nets', {});
+  return { content: [{ type: 'text' as const, text: resultText(result) }] };
+});
+
 // ---- Smart Layout ----
 
 // Pin definitions for auto-layout
