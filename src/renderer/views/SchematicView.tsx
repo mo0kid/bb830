@@ -344,7 +344,7 @@ function Junction({ x, y }: { x: number; y: number }) {
 // ---- Terminal symbols for dangling passive ends ----
 function TerminalSymbol({ x, y, terminal, side }: { x: number; y: number; terminal: PinTerminal; side: 'left' | 'right' }) {
   const dx = side === 'left' ? -1 : 1;
-  const tx = x + dx * 15;
+  const tx = x + dx * GRID * 1.5;
 
   if (terminal.type === 'vcc') {
     // V+ power symbol: upward arrow with line
@@ -437,7 +437,7 @@ export function SchematicView() {
     const passives = components.filter(c => !c.package.startsWith('DIP'));
 
     // Position ICs vertically centered
-    const IC_X = 14 * GRID;
+    const IC_X = 18 * GRID;
     let icY = 3 * GRID;
     const icPos: Array<{ comp: Component; x: number; y: number; h: number }> = [];
     for (const ic of ics) {
@@ -536,7 +536,7 @@ export function SchematicView() {
     );
   }
 
-  const svgW = 60 * GRID;
+  const svgW = 70 * GRID;
   const svgH = Math.max(layout.totalH, 30 * GRID);
 
   return (
@@ -562,43 +562,59 @@ export function SchematicView() {
         <line x1={GRID} y1={svgH - GRID} x2={svgW - GRID} y2={svgH - GRID} stroke="#2244bb" strokeWidth={2} opacity={0.4} />
         <text x={GRID + 4} y={svgH - GRID - 4} fill="#2244bb" fontSize={9} fontFamily="monospace">GND</text>
 
-        {/* Net connections — orthogonal routing with T-junctions */}
+        {/* Net connections — direct pin-to-pin orthogonal routing */}
         {nets.map((net, ni) => {
           if (net.connections.length < 2) return null;
           const color = NET_COLORS[ni % NET_COLORS.length];
-          const junctions: Array<{ x: number; y: number }> = [];
-          const wires: React.JSX.Element[] = [];
 
-          // Connect all pins in this net with orthogonal lines
           const positions = net.connections
             .map(c => layout.pinXY.get(`${c.componentId}:${c.pinIndex}`))
             .filter(Boolean) as Array<{ x: number; y: number }>;
 
           if (positions.length < 2) return null;
 
-          // Use a horizontal bus line at the average Y, with vertical drops to each pin
-          const busY = Math.round(positions.reduce((s, p) => s + p.y, 0) / positions.length / GRID) * GRID;
-
-          for (let i = 0; i < positions.length; i++) {
-            const p = positions[i];
-            // Vertical line from pin to bus
-            if (Math.abs(p.y - busY) > 2) {
-              wires.push(<line key={`v${ni}-${i}`} x1={p.x} y1={p.y} x2={p.x} y2={busY} stroke={color} strokeWidth={1.5} opacity={0.6} />);
-            }
-            // Junction dot at the T
-            junctions.push({ x: p.x, y: busY });
-          }
-
-          // Horizontal bus connecting all junctions
-          const xs = positions.map(p => p.x).sort((a, b) => a - b);
-          if (xs.length >= 2) {
-            wires.push(<line key={`h${ni}`} x1={xs[0]} y1={busY} x2={xs[xs.length - 1]} y2={busY} stroke={color} strokeWidth={1.5} opacity={0.6} />);
-          }
+          // Direct connection between each consecutive pair of pins
+          // Sort by x then y for a clean left-to-right flow
+          const sorted = [...positions].sort((a, b) => a.x - b.x || a.y - b.y);
 
           return (
             <g key={`net-${ni}`}>
-              {wires}
-              {junctions.map((j, ji) => <Junction key={`j${ni}-${ji}`} x={j.x} y={j.y} />)}
+              {sorted.map((pos, i) => {
+                if (i === 0) return null;
+                const prev = sorted[i - 1];
+                const cur = pos;
+
+                // Orthogonal route: horizontal from prev, then vertical to cur's Y, then horizontal to cur
+                // Choose the bend point to minimize visual clutter
+                const dx = cur.x - prev.x;
+                const dy = cur.y - prev.y;
+
+                if (Math.abs(dy) < 2) {
+                  // Same height — straight horizontal
+                  return <line key={`w${ni}-${i}`} x1={prev.x} y1={prev.y} x2={cur.x} y2={cur.y} stroke={color} strokeWidth={1.5} />;
+                }
+                if (Math.abs(dx) < 2) {
+                  // Same column — straight vertical
+                  return <line key={`w${ni}-${i}`} x1={prev.x} y1={prev.y} x2={cur.x} y2={cur.y} stroke={color} strokeWidth={1.5} />;
+                }
+
+                // L-shaped bend: go horizontal first, then vertical
+                // Use offset to avoid overlapping other nets
+                const bendOffset = (ni % 5) * 3;
+                const bendX = prev.x + dx / 2 + bendOffset;
+
+                return (
+                  <path
+                    key={`w${ni}-${i}`}
+                    d={`M${prev.x},${prev.y} L${bendX},${prev.y} L${bendX},${cur.y} L${cur.x},${cur.y}`}
+                    fill="none" stroke={color} strokeWidth={1.5}
+                  />
+                );
+              })}
+              {/* Junction dots at each pin */}
+              {sorted.map((pos, i) => (
+                <Junction key={`j${ni}-${i}`} x={pos.x} y={pos.y} />
+              ))}
             </g>
           );
         })}
