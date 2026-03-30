@@ -9,8 +9,7 @@ import {
  * MCP4922 Dual 12-bit SPI DAC
  *
  * Microchip's dual-channel 12-bit voltage-output DAC with SPI interface.
- * Used as the Pi GPIO interface in the CMI-01A rebuild — replaces all
- * the original digital logic (4116 DRAM, AD7524, AD7533, AD558).
+ * Pi GPIO interface for driving analog voicecard circuits via SPI.
  *
  * In simulation, the DAC output values are set directly via parameters
  * (value_a, value_b: 0-4095). In hardware, the Pi writes these via SPI.

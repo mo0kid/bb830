@@ -9,12 +9,12 @@ import {
 /**
  * SSM2045 Voltage-Controlled Filter
  *
- * The SSM2045 is the tracking filter used in the Fairlight CMI Series II/III.
+ * The SSM2045 is a tracking filter used in vintage sampling synthesizers.
  * Unlike the SSM2044, it exposes individual capacitor connections for each
  * of the four OTA filter poles, allowing asymmetric pole frequencies.
  *
- * In the CMI-01A, the caps are: C1=10nF, C2=3.3nF, C3=10nF, C4=2.2nF.
- * This asymmetry creates the distinctive Fairlight filter character —
+ * Typical tracking caps: C1=10nF, C2=3.3nF, C3=10nF, C4=2.2nF.
+ * This asymmetry creates a distinctive filter character —
  * the poles track together via the shared frequency CV but each has a
  * different absolute cutoff, producing a non-uniform rolloff slope that
  * emphasizes certain harmonics as the filter sweeps.
@@ -33,7 +33,7 @@ import {
  * State: [0..3] four integrator states, [4] input smoothing
  *
  * Parameters:
- *   cap1..cap4: capacitance values in farads (default: CMI-01A values)
+ *   cap1..cap4: capacitance values in farads (default: typical tracking values)
  */
 
 const PIN_SIG_IN = 0;
@@ -81,7 +81,7 @@ const ssm2045: ICModel = {
     const baseFreq = cvToFrequency(cv, 261.63);
 
     // External cap values determine each pole's cutoff relative to base
-    // Default: CMI-01A values — the asymmetry IS the Fairlight sound
+    // Default: typical tracking filter cap values
     const cap1 = params['cap1'] ?? 10e-9;   // 10nF
     const cap2 = params['cap2'] ?? 3.3e-9;  // 3.3nF
     const cap3 = params['cap3'] ?? 10e-9;   // 10nF

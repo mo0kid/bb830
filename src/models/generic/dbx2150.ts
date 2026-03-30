@@ -8,14 +8,13 @@ import {
 /**
  * dbx 2150 Voltage-Controlled Amplifier
  *
- * The dbx 2150 is a Blackmer-cell VCA used in the Fairlight CMI Series II.
- * It provides true RMS-level control with exponential (dB-linear) gain law.
- * Originally designed for dbx noise reduction, repurposed as a high-quality
- * VCA in pro audio and synthesizer designs.
+ * The dbx 2150 is a Blackmer-cell VCA used in vintage sampling
+ * synthesizers and pro audio equipment. It provides true RMS-level
+ * control with exponential (dB-linear) gain law.
  *
  * Character: Subtle even-harmonic coloration at higher gains, smooth
  * compression-like dynamics. The Blackmer cell's class-AB operation
- * creates a warm, slightly "glued" sound that's part of the CMI character.
+ * creates a warm, slightly "glued" sound.
  * Control feedthrough at high frequencies adds subtle brightness modulation.
  *
  * Control law: 6mV/dB (exponential)
@@ -96,8 +95,8 @@ const dbx2150: ICModel = {
       const colored = sig + dist * sig * Math.abs(sig);
 
       // 3. Control feedthrough — high-frequency CV leaks slightly
-      //    into the signal path. In the CMI this adds subtle
-      //    brightness modulation correlated with envelope.
+      //    into the signal path, adding subtle brightness
+      //    modulation correlated with envelope.
       const ftCoeff = 1.0 - Math.exp(-2 * Math.PI * 50000 * dt);
       s[1] += ftCoeff * (ec * 0.001 - s[1]);
 

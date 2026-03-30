@@ -112,7 +112,7 @@ const COMPONENT_LIBRARY: ComponentDefinition[] = [
     name: 'SSM2045 VCF',
     category: 'vcf',
     package: 'DIP18',
-    description: 'Fairlight CMI tracking filter. External caps per pole for asymmetric response.',
+    description: 'Tracking filter with external caps per pole for asymmetric response.',
     pins: [
       { index: 0, name: 'SIG IN', type: 'input' },
       { index: 1, name: 'CAP 1', type: 'bidirectional' },
@@ -192,7 +192,7 @@ const COMPONENT_LIBRARY: ComponentDefinition[] = [
     name: 'dbx 2150 VCA',
     category: 'vca',
     package: 'DIP8',
-    description: 'Blackmer-cell VCA from Fairlight CMI. 6mV/dB exponential. Warm character.',
+    description: 'Blackmer-cell VCA. 6mV/dB exponential. Warm vintage character.',
     pins: [
       { index: 0, name: 'SIG IN+', type: 'input' },
       { index: 1, name: 'SIG IN-', type: 'input' },
@@ -278,7 +278,7 @@ const COMPONENT_LIBRARY: ComponentDefinition[] = [
     name: 'LF347 Quad Op-Amp',
     category: 'opamp',
     package: 'DIP14',
-    description: 'Quad JFET op-amp. Used throughout CMI-01A voice card. ±15V supply.',
+    description: 'Quad JFET op-amp. Common in vintage voicecards. ±15V supply.',
     pins: [
       { index: 0, name: 'OUT A', type: 'output' },
       { index: 1, name: 'IN A-', type: 'input' },

@@ -27,7 +27,9 @@
       "Bash(git commit:*)",
       "mcp__bb830__bb830_add_board",
       "mcp__bb830__bb830_set_current_board",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(grep -E '\\\\.\\(md|txt\\)$')",
+      "Bash(find /Users/davewhiting/Developer/bb830/src -type f -name *.md)"
     ]
   },
   "enableAllProjectMcpServers": true,

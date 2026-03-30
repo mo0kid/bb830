@@ -23,9 +23,14 @@ export function App() {
   const { viewMode, setViewMode, toolMode, setToolMode, wireColor, setWireColor } = useUIStore();
 
   const handleSave = useCallback(async () => {
-    const state = useCircuitStore.getState();
-    const path = await window.bb830.project.save(state.project, state.filePath ?? undefined);
-    if (path) state.setFilePath(path);
+    try {
+      const state = useCircuitStore.getState();
+      const path = await window.bb830.project.save(state.project, state.filePath ?? undefined);
+      if (path) state.setFilePath(path);
+    } catch (err) {
+      console.error('Save failed:', err);
+      alert(`Save failed: ${err}`);
+    }
   }, []);
 
   const handleOpen = useCallback(async () => {

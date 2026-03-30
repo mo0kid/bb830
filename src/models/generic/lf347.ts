@@ -9,12 +9,9 @@ import {
 /**
  * LF347 Quad JFET Operational Amplifier
  *
- * Quad version of the LF347/TL074 family — the workhorse op-amp of
- * the Fairlight CMI-01A voice card. Used for:
- *   - DAC output buffering (F3, F4)
- *   - Filter control voltage scaling (F10)
- *   - Envelope shaping (F6)
- *   - VCA output buffering (F4, F6)
+ * Quad version of the LF347/TL074 family. Common in vintage synth
+ * voicecards. Used for DAC output buffering, filter CV scaling,
+ * envelope shaping, and VCA output buffering.
  *
  * Very similar to TL074 but with slightly better slew rate and
  * bandwidth. JFET input = high impedance, low bias current.
@@ -74,7 +71,7 @@ const lf347: ICModel = {
     const out = state.outputs;
 
     const gain = params['gain'] ?? 200000;
-    const supplyV = params['supply'] ?? 15; // CMI uses ±15V
+    const supplyV = params['supply'] ?? 15;
 
     // Differential inputs for all four channels
     const diffA = (inputs[PIN_IN_AP] ?? 0) - (inputs[PIN_IN_AN] ?? 0);

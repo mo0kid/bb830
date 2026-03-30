@@ -16,7 +16,7 @@ import {
  * Character: Clean, well-behaved 4-pole response. Smooth resonance.
  * Less "character" than the SSM2045's asymmetric poles but more
  * predictable tracking. Good starting point for matching — needs
- * external shaping network to approximate the CMI-01A sound.
+ * external shaping network to approximate vintage filter character.
  *
  * To match SSM2045 character, consider:
  *   - Adding a parallel high-pass shelf after the filter
